@@ -1,0 +1,56 @@
+name: ruby_invoice
+description: "Ruby Invoice - fast offline-first billing, ledger & inventory app with Firebase sync."
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Offline-first local database
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  path_provider: ^2.1.4
+
+  # Firebase sync (works offline-first; sync activates after FIREBASE_SETUP.md)
+  firebase_core: ^3.8.0
+  firebase_auth: ^5.3.3
+  cloud_firestore: ^5.5.0
+  connectivity_plus: ^6.0.5
+
+  # Utilities
+  uuid: ^4.5.1
+  intl: ^0.19.0
+  crypto: ^3.0.5
+  shared_preferences: ^2.3.3
+
+  # PDF bills & backup share
+  pdf: ^3.11.1
+  share_plus: ^10.0.3
+  file_picker: ^8.1.6
+
+  # In-app update check (GitHub Releases)
+  http: ^1.2.2
+  package_info_plus: ^8.1.1
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.2
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+    - assets/fonts/
+
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: "launcher_icon"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/app_icon_fg.png"
