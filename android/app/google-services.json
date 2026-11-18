@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "972758775225",
+    "project_id": "ruby-invoice-c17bd",
+    "storage_bucket": "ruby-invoice-c17bd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:972758775225:android:73cf3536b6d2a33e54f268",
+        "android_client_info": {
+          "package_name": "com.rubyinvoice.ruby_invoice"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCBPMZrOqIN8mO3lEWknvK_LnuzakpeWjU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
