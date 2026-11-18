@@ -109,6 +109,19 @@ class Repo {
     await db.rawUpdate('UPDATE customers SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', [_now(), id]);
   }
 
+  /// City snapshot for the given customer ids (home bill tiles).
+  Future<Map<String, String>> citiesFor(Iterable<String> ids) async {
+    final list = ids.toSet().toList();
+    if (list.isEmpty) return {};
+    final placeholders = List.filled(list.length, '?').join(', ');
+    final db = await _db;
+    final rows = await db.rawQuery(
+      'SELECT id, city FROM customers WHERE id IN ($placeholders)',
+      list,
+    );
+    return {for (final r in rows) r['id'] as String: (r['city'] ?? '') as String};
+  }
+
   // ---------------- products (inventory) ----------------
 
   Future<List<Product>> searchProducts(String query) async {
@@ -171,6 +184,16 @@ class Repo {
   }
 
   // ---------------- billing ----------------
+
+  /// The invoice number the NEXT saved bill will get (shown in the
+  /// billing header before saving). Consistent with saveBill(), which
+  /// uses MAX(bill_no) + 1 across ALL bills (deleted ones too, so a
+  /// number is never reused).
+  Future<int> nextBillNo() async {
+    final db = await _db;
+    final rows = await db.rawQuery('SELECT COALESCE(MAX(bill_no), 0) + 1 AS next FROM bills');
+    return (rows.first['next'] as int?) ?? 1;
+  }
 
   /// Saves a bill + its items atomically, records "received now" as a
   /// payment, and adjusts stock for tracked products. Exact math:

@@ -29,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Map<String, List<Bill>> _bills = {};
   Map<String, (int, int)> _totals = {};
+  Map<String, String> _cities = {}; // customerId -> city (bill tiles)
   bool _loading = true;
 
   @override
@@ -53,10 +54,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final keys = [Dt.todayKey(), Dt.yesterdayKey()];
     final bills = await Repo.instance.billsForDays(keys);
     final totals = await Repo.instance.dayTotals(keys);
+    final cities = await Repo.instance.citiesFor(
+      bills.values.expand((l) => l).map((b) => b.customerId),
+    );
     if (!mounted) return;
     setState(() {
       _bills = bills;
       _totals = totals;
+      _cities = cities;
       _loading = false;
     });
     SyncService.instance.syncSoon();
@@ -245,7 +250,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, color: Ruby.ink),
       ),
       subtitle: Text(
-        '#${bill.billNo}  •  ${Dt.fmtTime(DateTime.fromMillisecondsSinceEpoch(bill.billDate))}',
+        [
+          if ((_cities[bill.customerId] ?? '').isNotEmpty) _cities[bill.customerId]!,
+          Dt.fmtTime(DateTime.fromMillisecondsSinceEpoch(bill.billDate)),
+        ].join('  •  '),
         style: const TextStyle(fontSize: 12.5, color: Ruby.muted),
       ),
       trailing: Text(

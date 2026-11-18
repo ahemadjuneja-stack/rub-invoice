@@ -38,6 +38,7 @@ class _BillingScreenState extends State<BillingScreen> {
   final List<CartLine> _cart = [];
   Product? _selected;
   bool _saving = false;
+  int _billNo = 0; // invoice number this bill will get (header display)
 
   /// Payment mode for THIS bill: 'udhar' (credit, nothing received now)
   /// or 'jama' (cash received now). Miracle-style one-tap toggle.
@@ -47,6 +48,13 @@ class _BillingScreenState extends State<BillingScreen> {
   void initState() {
     super.initState();
     _loadCatalog();
+    _loadHeader();
+  }
+
+  Future<void> _loadHeader() async {
+    final no = await _repo.nextBillNo();
+    if (!mounted) return;
+    setState(() => _billNo = no);
   }
 
   @override
@@ -304,7 +312,25 @@ class _BillingScreenState extends State<BillingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Bill: ${widget.customer.name}', overflow: TextOverflow.ellipsis),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.customer.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800),
+            ),
+            Text(
+              [
+                'Invoice #${_billNo == 0 ? '...' : _billNo}',
+                if (widget.customer.city.isNotEmpty) widget.customer.city,
+                Dt.fmtDate(DateTime.now()),
+              ].join('  •  '),
+              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFFF3B7BC)),
+            ),
+          ],
+        ),
       ),
       body: Column(
         children: [
@@ -568,6 +594,10 @@ class _BillingScreenState extends State<BillingScreen> {
                       Text(
                         Money.fmt(_totalPaise),
                         style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800, color: Colors.white),
+                      ),
+                      Text(
+                        'Total items: ${_cart.fold<int>(0, (s, l) => s + l.qty.round())}',
+                        style: const TextStyle(fontSize: 11, color: Color(0xFFF3B7BC)),
                       ),
                     ],
                   ),
