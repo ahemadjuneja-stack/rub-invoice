@@ -151,7 +151,7 @@ class _BackupScreenState extends State<BackupScreen> {
         children: [
           Row(
             children: [
-              CircleAvatar(backgroundColor: accent.withOpacity(0.12), child: Icon(icon, color: accent)),
+              CircleAvatar(backgroundColor: accent.withValues(alpha: 0.12), child: Icon(icon, color: accent)),
               const SizedBox(width: 12),
               Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Ruby.ink)),
             ],

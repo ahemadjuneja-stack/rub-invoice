@@ -23,7 +23,9 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
+          # Pinned so CI matches the locally tested SDK exactly.
           channel: stable
+          flutter-version: 3.50.0
           cache: true
 
       - name: Flutter version

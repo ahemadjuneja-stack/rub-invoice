@@ -293,7 +293,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               Expanded(
                 flex: 2,
                 child: DropdownButtonFormField<String>(
-                  value: _unit,
+                  initialValue: _unit,
                   decoration: const InputDecoration(hintText: 'Unit', isDense: false),
                   items: [
                     for (final u in _units) DropdownMenuItem(value: u, child: Text(u, style: const TextStyle(fontSize: 14))),
@@ -325,7 +325,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           const SizedBox(height: 8),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            activeColor: Ruby.ruby,
+            activeThumbColor: Ruby.ruby,
             title: const Text('Track stock', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
             subtitle: const Text('Stock reduces automatically with every bill', style: TextStyle(fontSize: 12.5)),
             value: _trackStock,

@@ -57,12 +57,35 @@ The app unlocks itself within seconds - no reinstall, no app update.
 
 ## One-time setup
 
-1. Get your admin UID: Firebase Console -> Authentication -> Users ->
-   copy the UID of your own (admin) account.
-2. Open `docs/firestore.rules`, replace `PASTE_ADMIN_UID_HERE` with that
-   UID, and publish the rules (Console -> Firestore -> Rules).
-3. Deploy the same file with the CLI if you prefer:
-   `firebase deploy --only firestore:rules`.
+1. **Finish the Firebase setup first** (`docs/FIREBASE_SETUP.md`):
+   `flutterfire configure`, enable Phone sign-in, create Firestore.
+   Until this is done, no UID exists anywhere.
+2. **Register once in your own app**: open Ruby Invoice -> Register ->
+   enter your mobile number -> verify the OTP -> business name + PIN.
+   This creates your account in Firebase.
+3. **Copy your UID**: Firebase Console -> **Authentication** -> **Users**
+   tab -> find your phone number in the list -> copy the value in the
+   **User UID** column (a long string like `xK9dQmT2SfYr5pAbC1vZ...`).
+4. **Paste it into the rules**: Firebase Console -> **Firestore
+   Database** -> **Rules** tab. In the pasted contents of
+   `docs/firestore.rules`, replace the placeholder
+   `PASTE_ADMIN_UID_HERE` with your UID so the line reads:
+   `&& request.auth.uid == 'xK9dQmT2SfYr5pAbC1vZ...'` (keep the quotes).
+   Click **Publish**.
+5. **Approve yourself**: Firebase Console -> **Firestore Database** ->
+   **users** collection -> open your document -> edit the `status` field
+   from `"pending"` to `"active"` -> press Update. (Console edits always
+   bypass security rules, so this works immediately.)
+
+Notes:
+- The UID in the rules lets an *admin-signed-in client* manage accounts.
+  Approving / blocking from the Firebase Console itself always works,
+  with or without the UID - the Console runs as a trusted admin.
+- One UID per admin. To add a second admin later, extend `isAdmin()` to
+  a list: `request.auth.uid in ['<uid-1>', '<uid-2>']`.
+- If you register with a different number, that is a NEW UID - repeat
+  steps 3-5 for it. To deploy rules via CLI instead:
+  `firebase deploy --only firestore:rules`.
 
 ## Device IDs
 
