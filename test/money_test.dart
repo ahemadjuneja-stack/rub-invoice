@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ruby_invoice/core/formatters.dart';
-import 'package:ruby_invoice/data/models.dart';
+import 'package:ruby_invoice/models/models.dart';
 
 void main() {
   group('Money.parsePaise', () {

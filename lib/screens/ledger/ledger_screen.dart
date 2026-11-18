@@ -1,13 +1,15 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
-import '../../data/models.dart';
+import '../../models/models.dart';
+import '../../models/settlement.dart';
 import '../../data/repo.dart';
 import '../../services/sync_service.dart';
 import '../billing/billing_screen.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 import '../customer/customer_form_screen.dart';
 
 /// Full customer account: opening balance + every bill (+) and every
@@ -27,6 +29,7 @@ class _LedgerScreenState extends State<LedgerScreen> {
   Customer? _customer;
   int _balance = 0;
   List<LedgerEntry> _entries = [];
+  Settlement? _settlement; // FIFO view: which bills are settled/partial
   bool _loading = true;
 
   @override
@@ -38,11 +41,13 @@ class _LedgerScreenState extends State<LedgerScreen> {
   Future<void> _load() async {
     final cust = await Repo.instance.getCustomer(widget.customerId);
     final (balance, entries) = await Repo.instance.ledger(widget.customerId);
+    final st = await Repo.instance.settlement(widget.customerId);
     if (!mounted) return;
     setState(() {
       _customer = cust;
       _balance = balance;
       _entries = entries;
+      _settlement = st;
       _loading = false;
     });
     SyncService.instance.syncSoon();
@@ -209,6 +214,9 @@ class _LedgerScreenState extends State<LedgerScreen> {
           : Column(
               children: [
                 _header(),
+                if (_settlement != null &&
+                    (_settlement!.unpaidCount + _settlement!.partialCount) > 0)
+                  _settlementStrip(),
                 const Divider(),
                 Expanded(
                   child: _entries.isEmpty
@@ -249,6 +257,35 @@ class _LedgerScreenState extends State<LedgerScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Bill status chips row: how many bills are still open / partial.
+  Widget _settlementStrip() {
+    final st = _settlement!;
+    final open = st.unpaidCount;
+    final partial = st.partialCount;
+    final parts = <String>[
+      if (open > 0) '$open unpaid bill${open == 1 ? '' : 's'}',
+      if (partial > 0) '$partial partial',
+    ];
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFFFF4F5),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      child: Row(
+        children: [
+          const Icon(Icons.flag_outlined, size: 15, color: Ruby.ruby),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              'Oldest bills settle first (FIFO): ${parts.join(" \u2022 ")} '
+              '- tap a bill row to see paid/due.',
+              style: const TextStyle(fontSize: 11.5, color: Ruby.ruby),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -317,6 +354,9 @@ class _LedgerScreenState extends State<LedgerScreen> {
     final isOpening = e.kind == 'opening';
     final debit = e.debitPaise > 0;
     final amountColor = isOpening ? Ruby.muted : (debit ? Ruby.ink : Ruby.green);
+    final row = isBill && _settlement != null
+        ? _settlement!.rows.where((r) => r.refId == e.refId).firstOrNull
+        : null;
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: isBill
@@ -340,7 +380,17 @@ class _LedgerScreenState extends State<LedgerScreen> {
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Ruby.ink),
       ),
-      subtitle: Text(Dt.fmtDateTime(e.date), style: const TextStyle(fontSize: 12, color: Ruby.muted)),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(Dt.fmtDateTime(e.date), style: const TextStyle(fontSize: 12, color: Ruby.muted)),
+          if (row != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: _statusChip(row),
+            ),
+        ],
+      ),
       trailing: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -362,6 +412,46 @@ class _LedgerScreenState extends State<LedgerScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// SETTLED (green) / PARTIAL with pending amount / UNPAID (red).
+  Widget _statusChip(SettlementRow row) {
+    final String label;
+    final Color fg;
+    final Color bg;
+    switch (row.status) {
+      case SettlementStatus.settled:
+        label = 'SETTLED';
+        fg = Ruby.green;
+        bg = Ruby.greenLight;
+        break;
+      case SettlementStatus.partial:
+        label = 'PARTIAL - DUE ${Money.fmt(row.duePaise)}';
+        fg = const Color(0xFFB8860B);
+        bg = const Color(0xFFFFF7E0);
+        break;
+      case SettlementStatus.unpaid:
+        label = 'UNPAID - ${Money.fmt(row.duePaise)}';
+        fg = Ruby.ruby;
+        bg = Ruby.rubyLight;
+        break;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.5,
+          color: fg,
+        ),
       ),
     );
   }

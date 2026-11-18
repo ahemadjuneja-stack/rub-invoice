@@ -1,6 +1,55 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------
+    // ADMIN CONTROL: put YOUR admin Firebase UID here (find it in
+    // Firebase Console -> Authentication -> Users). The admin may read
+    // every account (to approve / block / set expiry / manage devices)
+    // and may edit ONLY the access-control fields of any user.
+    // ------------------------------------------------------------------
+    function isAdmin() {
+      return request.auth != null
+          && request.auth.uid == 'PASTE_ADMIN_UID_HERE';
+    }
+
+    // Fields only the Admin may change (the kill-switch).
+    function onlyAdminFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'expiryDate', 'maxDevices',
+                    'registeredDevices', 'updatedAt']);
+    }
+
+    // Account record for every shop owner. The owner can read their own
+    // account (needed offline for the access check) but can NEVER flip
+    // their own status/expiry - that is the whole point of the
+    // admin approval + kill-switch system.
+    match /users/{userId} {
+      allow get, list: if request.auth != null
+                         && (request.auth.uid == userId || isAdmin());
+      allow create: if request.auth != null
+                      && request.auth.uid == userId
+                      && request.resource.data.status == 'pending'
+                      && request.resource.data.maxDevices == 2;
+      // Owner may only touch their own PIN hash / profile fields;
+      // status, expiryDate, maxDevices and registeredDevices are
+      // admin-controlled (plus the automatic device self-registration).
+      allow update: if request.auth != null && (
+                        (request.auth.uid == userId
+                         && onlyAdminFieldsChanged()
+                         && request.resource.data.status == resource.data.status
+                         && request.resource.data.expiryDate == resource.data.expiryDate)
+                        || isAdmin()
+                        || (request.auth.uid == userId
+                            // self device registration within the limit
+                            && request.resource.data.diff(resource.data).affectedKeys()
+                                  .hasOnly(['registeredDevices'])
+                            && request.resource.data.registeredDevices.size()
+                                  <= request.resource.data.maxDevices)
+                      );
+      allow delete: if isAdmin();
+    }
+
     // Each shop gets a document tree under shops/{uid}. Only the
     // authenticated owner of that uid can read/write its own shop data.
     match /shops/{shopId}/{document=**} {

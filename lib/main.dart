@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -20,6 +21,11 @@ Future<void> main() async {
   if (firebaseConfigured) {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.current);
+      // Offline persistence: Firestore keeps a local cache so the live
+      // access-control snapshot (users/{uid}) and every sync query keep
+      // working with zero network (spec: persistenceEnabled: true).
+      FirebaseFirestore.instance.settings =
+          const Settings(persistenceEnabled: true);
       fbReady = true;
     } catch (e) {
       debugPrint('Firebase init failed, continuing offline: $e');

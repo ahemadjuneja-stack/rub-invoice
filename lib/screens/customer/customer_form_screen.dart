@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import '../../core/formatters.dart';
 import '../../data/repo.dart';
 import '../../services/sync_service.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 
 /// Add or edit a customer: name, city, phone, opening balance.
 class CustomerFormScreen extends StatefulWidget {

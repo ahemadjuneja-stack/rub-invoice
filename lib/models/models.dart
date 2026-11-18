@@ -6,6 +6,8 @@
 /// Amounts are ALWAYS integer paise.
 library;
 
+import '../core/formatters.dart';
+
 class Customer {
   final String id;
   final String name;
@@ -361,5 +363,7 @@ class CartLine {
 
   CartLine({this.productId, required this.name, required this.qty, required this.ratePaise});
 
-  int get amountPaise => (qty * ratePaise).round();
+  /// Exact amount via the decimal package: no floating-point product,
+  /// round half-up to the nearest paise. 0% rounding error by design.
+  int get amountPaise => Money.lineAmountPaise(qty, ratePaise);
 }

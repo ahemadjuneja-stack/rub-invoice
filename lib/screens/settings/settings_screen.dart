@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../../services/sync_service.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 
 /// Shop profile + bill format settings. These values print on the PDF bill.
 class SettingsScreen extends StatefulWidget {

@@ -3,10 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
-import '../../data/models.dart';
+import '../../models/models.dart';
 import '../../data/repo.dart';
 import '../../services/sync_service.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 
 /// Inventory: save products once (name + default qty + price + optional
 /// stock). During billing, typing the name auto-fills everything and you

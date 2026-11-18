@@ -1,18 +1,30 @@
+import 'package:decimal/decimal.dart';
 import 'package:intl/intl.dart';
 
 /// Money helpers. IMPORTANT: every amount in the database is an INTEGER
-/// number of paise. No floating point is ever stored or summed, so the
-/// ledger is mathematically exact (the "1% bhi galati nahi" rule).
+/// number of paise and every text -> paise conversion goes through the
+/// `decimal` package, so there is 0% rounding or floating-point error
+/// anywhere in the app (the "1% bhi galati nahi" rule).
 class Money {
   Money._();
 
-  /// Converts a rupees text field ("1250", "1250.5", "1,250.50") to paise.
+  /// Converts a rupees text field ("1250", "1250.5", "1,250.50") to paise
+  /// using exact decimal arithmetic (never a double).
   static int parsePaise(String input) {
     var s = input.trim().replaceAll(RegExp(r'[₹,\s]'), '');
     if (s.isEmpty) return 0;
-    final v = double.tryParse(s);
-    if (v == null || v < 0) return 0;
-    return (v * 100).round();
+    final d = Decimal.tryParse(s);
+    if (d == null || d < Decimal.zero) return 0;
+    return (d * Decimal.fromInt(100)).round().toBigInt().toInt();
+  }
+
+  /// Exact paise for a quantity x rate line. The quantity goes through
+  /// its shortest round-trip text (`0.1` stays exactly 0.1, never
+  /// 0.1000000000000000055511151231257827), so the product is computed
+  /// with exact decimal math and rounded half-up to the nearest paise.
+  static int lineAmountPaise(double qty, int ratePaise) {
+    final q = Decimal.parse(qty.toString());
+    return (q * Decimal.fromInt(ratePaise)).round().toBigInt().toInt();
   }
 
   /// Formats paise as Indian-grouped rupees, e.g. 1250000 -> "₹ 12,500".
@@ -46,11 +58,28 @@ class Money {
   }
 }
 
-/// Date helpers. Bills carry both an epoch timestamp and a local-day key
-/// ("2026-11-19") so that day/month grouping is always in the shop's own
-/// timezone, never UTC.
+/// Quantity text helpers ("1" -> "1", "1.50" -> "1.5", "0.5" -> "0.5").
+class Qty {
+  Qty._();
+
+  static String fmt(double qty) {
+    if (qty == qty.roundToDouble()) return qty.round().toString();
+    return qty.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+  }
+
+  /// Decimal from a qty text field ("2", "0.5", "1,000").
+  static Decimal parse(String input) {
+    final s = input.trim().replaceAll(',', '');
+    return Decimal.tryParse(s) ?? Decimal.zero;
+  }
+}
+
 class Dt {
   Dt._();
+
+  /// Bills carry both an epoch timestamp and a local-day key
+  /// ("2026-11-19") so that day/month grouping is always in the shop's
+  /// own timezone, never UTC.
 
   static const List<String> months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',

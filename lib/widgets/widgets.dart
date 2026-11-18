@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme.dart';
-import '../../services/sync_service.dart';
+import '../core/theme.dart';
+import '../services/sync_service.dart';
 
 /// Small reusable widgets shared across screens.
 

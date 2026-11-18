@@ -4,7 +4,7 @@ import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../services/backup_service.dart';
 import '../../services/sync_service.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 
 /// Backup & restore. Export produces a single JSON file you can save to
 /// Google Drive / WhatsApp; restore replaces the local database with it.

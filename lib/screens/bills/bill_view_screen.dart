@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
-import '../../data/models.dart';
+import '../../models/models.dart';
 import '../../data/repo.dart';
 import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 
 /// Bill detail: items, totals, share PDF, delete.
 class BillViewScreen extends StatefulWidget {

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'core/theme.dart';
-import 'features/auth/auth_gate.dart';
+import 'screens/auth/auth_gate.dart';
 
 class RubyInvoiceApp extends StatelessWidget {
   const RubyInvoiceApp({super.key});

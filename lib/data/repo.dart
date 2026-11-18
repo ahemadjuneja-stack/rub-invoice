@@ -1,7 +1,8 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import '../models/models.dart';
+import '../models/settlement.dart';
 import 'db.dart';
-import 'models.dart';
 
 /// Single repository for every read/write. All amounts are integer paise.
 class Repo {
@@ -451,17 +452,45 @@ class Repo {
     return (running, entries);
   }
 
+  /// FIFO settlement view: which bills are settled / partial / unpaid and
+  /// how the customer's payments were applied (oldest first). Pure read -
+  /// nothing is stored, so it can never drift out of sync with the books.
+  Future<Settlement> settlement(String customerId) async {
+    final db = await _db;
+    final custRows = await db.rawQuery(
+      'SELECT opening_balance_paise FROM customers WHERE id = ?',
+      [customerId],
+    );
+    final opening = custRows.isEmpty
+        ? 0
+        : ((custRows.first['opening_balance_paise'] ?? 0) as int);
+    final billRows = await db.rawQuery(
+      'SELECT * FROM bills WHERE customer_id = ? AND is_deleted = 0',
+      [customerId],
+    );
+    final payRows = await db.rawQuery(
+      'SELECT * FROM payments WHERE customer_id = ? AND is_deleted = 0',
+      [customerId],
+    );
+    return Settlement.allocate(
+      bills: billRows.map(Bill.fromMap).toList(),
+      payments: payRows.map(Payment.fromMap).toList(),
+      openingBalancePaise: opening,
+    );
+  }
+
   // ---------------- reports ----------------
 
-  /// Sales grouped by month for a year (fills all 12 months in caller).
-  Future<List<(String, int, int)>> monthlySales(int year) async {
+  /// Sales grouped by month inside a day range (inclusive), e.g.
+  /// startDay "2026-04-01", endDay "2027-03-31" for an Indian FY.
+  Future<List<(String, int, int)>> salesByMonth(String startDay, String endDay) async {
     final db = await _db;
     final rows = await db.rawQuery('''
       SELECT substr(bill_day, 1, 7) AS ym, COUNT(*) AS cnt, SUM(total_paise) AS total
       FROM bills
-      WHERE is_deleted = 0 AND bill_day LIKE ?
+      WHERE is_deleted = 0 AND bill_day >= ? AND bill_day <= ?
       GROUP BY ym ORDER BY ym
-    ''', ['$year-%']);
+    ''', [startDay, endDay]);
     return rows
         .map((r) => (
               r['ym'] as String,
@@ -471,34 +500,55 @@ class Repo {
         .toList();
   }
 
-  Future<List<Map<String, Object?>>> customerSummaries(int year) async {
+  /// Sales grouped by DAY inside a day range (month drill-down).
+  Future<List<(String, int, int)>> salesByDay(String startDay, String endDay) async {
+    final db = await _db;
+    final rows = await db.rawQuery('''
+      SELECT bill_day, COUNT(*) AS cnt, SUM(total_paise) AS total
+      FROM bills
+      WHERE is_deleted = 0 AND bill_day >= ? AND bill_day <= ?
+      GROUP BY bill_day ORDER BY bill_day
+    ''', [startDay, endDay]);
+    return rows
+        .map((r) => (
+              r['bill_day'] as String,
+              (r['cnt'] as int?) ?? 0,
+              (r['total'] as int?) ?? 0,
+            ))
+        .toList();
+  }
+
+  /// Customer-wise purchases inside a day range (who bought how much).
+  Future<List<Map<String, Object?>>> customerSummaries(String startDay, String endDay) async {
     final db = await _db;
     return db.rawQuery('''
       SELECT c.id, c.name, c.city,
-             IFNULL(SUM(CASE WHEN b.bill_day LIKE ? THEN b.total_paise END), 0) AS year_total,
-             IFNULL(SUM(b.total_paise), 0) AS all_total,
+             IFNULL(SUM(b.total_paise), 0) AS period_total,
              MAX(b.bill_date) AS last_bill
       FROM customers c
-      LEFT JOIN bills b ON b.customer_id = c.id AND b.is_deleted = 0
+      JOIN bills b ON b.customer_id = c.id AND b.is_deleted = 0
+          AND b.bill_day >= ? AND b.bill_day <= ?
       WHERE c.is_deleted = 0
       GROUP BY c.id
-      HAVING IFNULL(SUM(b.total_paise), 0) > 0
-      ORDER BY all_total DESC
-    ''', ['$year-%']);
+      ORDER BY period_total DESC
+    ''', [startDay, endDay]);
   }
 
-  Future<List<Map<String, Object?>>> topProducts(int year) async {
+  /// Item-wise sales inside a day range (which stock sold how much).
+  Future<List<Map<String, Object?>>> topProducts(String startDay, String endDay) async {
     final db = await _db;
     return db.rawQuery('''
       SELECT i.product_name AS name, SUM(i.qty) AS qty, SUM(i.amount_paise) AS amt
       FROM bill_items i
       JOIN bills b ON b.id = i.bill_id
-      WHERE b.is_deleted = 0 AND i.is_deleted = 0 AND b.bill_day LIKE ?
+      WHERE b.is_deleted = 0 AND i.is_deleted = 0
+            AND b.bill_day >= ? AND b.bill_day <= ?
       GROUP BY LOWER(i.product_name)
       ORDER BY amt DESC
-      LIMIT 30
-    ''', ['$year-%']);
+      LIMIT 50
+    ''', [startDay, endDay]);
   }
+
 
   // ---------------- shop profile ----------------
 

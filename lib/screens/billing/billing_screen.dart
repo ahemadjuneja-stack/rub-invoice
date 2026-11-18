@@ -3,11 +3,11 @@ import 'package:flutter/services.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
-import '../../data/models.dart';
+import '../../models/models.dart';
 import '../../data/repo.dart';
 import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 
 /// Smart billing screen (Miracle-style):
 ///  - 3-slim-column entry row: [ Product name | Qty | Price ]
@@ -38,6 +38,10 @@ class _BillingScreenState extends State<BillingScreen> {
   final List<CartLine> _cart = [];
   Product? _selected;
   bool _saving = false;
+
+  /// Payment mode for THIS bill: 'udhar' (credit, nothing received now)
+  /// or 'jama' (cash received now). Miracle-style one-tap toggle.
+  String _payMode = 'udhar';
 
   @override
   void initState() {
@@ -176,7 +180,7 @@ class _BillingScreenState extends State<BillingScreen> {
       showSnack(context, 'Add at least one item');
       return;
     }
-    final paid = Money.parsePaise(_paidC.text);
+    final paid = _payMode == 'jama' ? Money.parsePaise(_paidC.text) : 0;
     if (paid > _totalPaise) {
       final ok = await confirmDialog(
         context,
@@ -328,7 +332,7 @@ class _BillingScreenState extends State<BillingScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            flex: 5,
+            flex: 3,
             child: RawAutocomplete<Product>(
               textEditingController: _productC,
               focusNode: _productF,
@@ -400,7 +404,7 @@ class _BillingScreenState extends State<BillingScreen> {
           ),
           const SizedBox(width: 6),
           Expanded(
-            flex: 2,
+            flex: 1,
             child: TextField(
               controller: _qtyC,
               focusNode: _qtyF,
@@ -418,7 +422,7 @@ class _BillingScreenState extends State<BillingScreen> {
           ),
           const SizedBox(width: 6),
           Expanded(
-            flex: 2,
+            flex: 1,
             child: TextField(
               controller: _rateC,
               focusNode: _rateF,
@@ -497,31 +501,56 @@ class _BillingScreenState extends State<BillingScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Payment mode toggle: Credit/Udhar vs Cash/Jama (one tap).
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Row(
               children: [
-                const Icon(Icons.payments_outlined, size: 18, color: Ruby.muted),
-                const SizedBox(width: 8),
-                const Text('Received now', style: TextStyle(fontSize: 13, color: Ruby.muted)),
-                const SizedBox(width: 10),
                 Expanded(
-                  child: TextField(
-                    controller: _paidC,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*$'))],
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-                    decoration: const InputDecoration(
-                      hintText: '0 (leave empty for full udhar)',
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                    ),
+                  child: _payChip(
+                    value: 'udhar',
+                    label: 'CREDIT / UDHAR',
+                    icon: Icons.schedule_outlined,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _payChip(
+                    value: 'jama',
+                    label: 'CASH / JAMA',
+                    icon: Icons.payments_outlined,
                   ),
                 ),
               ],
             ),
           ),
+          if (_payMode == 'jama')
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.currency_rupee, size: 18, color: Ruby.muted),
+                  const SizedBox(width: 8),
+                  const Text('Received now', style: TextStyle(fontSize: 13, color: Ruby.muted)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _paidC,
+                      autofocus: true,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*$'))],
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                      decoration: const InputDecoration(
+                        hintText: '0 (extra becomes advance)',
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Container(
             color: Ruby.ruby,
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
@@ -532,9 +561,9 @@ class _BillingScreenState extends State<BillingScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'TOTAL',
-                        style: TextStyle(fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.w800, color: Color(0xFFF3B7BC)),
+                      Text(
+                        _payMode == 'jama' ? 'GRAND TOTAL' : 'TOTAL UDHAR',
+                        style: const TextStyle(fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.w800, color: Color(0xFFF3B7BC)),
                       ),
                       Text(
                         Money.fmt(_totalPaise),
@@ -547,12 +576,15 @@ class _BillingScreenState extends State<BillingScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: Ruby.ruby,
-                    minimumSize: const Size(110, 48),
+                    minimumSize: const Size(150, 48),
                   ),
                   onPressed: _saving ? null : _save,
                   child: _saving
                       ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Ruby.ruby))
-                      : const Text('SAVE'),
+                      : const Text(
+                          'SAVE & PRINT / PDF',
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.2),
+                        ),
                 ),
               ],
             ),
@@ -561,10 +593,46 @@ class _BillingScreenState extends State<BillingScreen> {
       ),
     );
   }
+
+  Widget _payChip({
+    required String value,
+    required String label,
+    required IconData icon,
+  }) {
+    final selected = _payMode == value;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => setState(() {
+        _payMode = value;
+        if (value == 'udhar') _paidC.clear();
+      }),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? Ruby.ruby : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: selected ? Ruby.ruby : Ruby.line),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: selected ? Colors.white : Ruby.muted),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+                color: selected ? Colors.white : Ruby.muted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-/// "1" -> "1", "1.50" -> "1.5", "0.5" -> "0.5"
-String qtyText(double qty) {
-  if (qty == qty.roundToDouble()) return qty.round().toString();
-  return qty.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
-}
+/// Kept as a thin alias so older call sites keep working.
+String qtyText(double qty) => Qty.fmt(qty);

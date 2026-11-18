@@ -4,14 +4,18 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme.dart';
+import '../../data/repo.dart';
+import '../../services/access_service.dart';
 import '../../services/pin_service.dart';
 import '../../services/sync_service.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 
-/// One-time registration: mobile number + 4-digit PIN.
-/// * Firebase configured -> OTP verifies the number, then the PIN is set.
+/// One-time registration: Mobile Number + Business Name + 4-digit Quick PIN.
+/// * Firebase configured -> OTP verifies the number, then the account is
+///   created in Firestore as users/{uid} with status "pending" - it goes
+///   live only after the Admin approves it.
 /// * Firebase NOT configured -> local registration with PIN only; the
-///   number is stored and OTP turns on automatically after setup.
+///   number is stored and OTP + admin approval turn on after setup.
 class RegistrationScreen extends StatefulWidget {
   final VoidCallback onDone;
   const RegistrationScreen({super.key, required this.onDone});
@@ -21,6 +25,7 @@ class RegistrationScreen extends StatefulWidget {
 }
 
 class _RegistrationScreenState extends State<RegistrationScreen> {
+  final _businessC = TextEditingController();
   final _phoneC = TextEditingController();
   final _pinC = TextEditingController();
   final _pin2C = TextEditingController();
@@ -35,6 +40,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
   @override
   void dispose() {
+    _businessC.dispose();
     _phoneC.dispose();
     _pinC.dispose();
     _pin2C.dispose();
@@ -43,9 +49,14 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   }
 
   Future<void> _submitDetails() async {
+    final business = _businessC.text.trim();
     final phone = _phoneC.text.trim();
     final pin = _pinC.text.trim();
     final pin2 = _pin2C.text.trim();
+    if (business.isEmpty) {
+      showSnack(context, 'Enter your business name', error: true);
+      return;
+    }
     if (phone.length != 10 || int.tryParse(phone) == null) {
       showSnack(context, 'Enter a valid 10-digit mobile number', error: true);
       return;
@@ -118,12 +129,40 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   }
 
   Future<void> _finishRegistration(String phone) async {
+    // PIN hash first (salted SHA-256, never the plain PIN).
+    await PinService.instance.setPin(_pinC.text.trim());
+
+    if (SyncService.instance.fbReady) {
+      // Create / attach the master account: users/{uid} with
+      // status "pending" until the Admin approves it.
+      final stored = await PinService.instance.stored;
+      try {
+        await AccessService.instance.registerUser(
+          phone: '+91$phone',
+          businessName: _businessC.text.trim(),
+          pinHash: stored.hash,
+          pinSalt: stored.salt,
+        );
+      } catch (e) {
+        _error('Could not create account: $e');
+        return;
+      }
+    }
+
+    // Remember registration locally + use the business name on bills.
     final sp = await SharedPreferences.getInstance();
     await sp.setString('reg_phone', phone);
-    await PinService.instance.setPin(_pinC.text.trim());
+    try {
+      await Repo.instance.setMeta('shop_name', _businessC.text.trim());
+    } catch (_) {}
     SyncService.instance.syncSoon();
     if (!mounted) return;
-    showSnack(context, 'Registered. Ruby Invoice is ready!');
+    showSnack(
+      context,
+      SyncService.instance.fbReady
+          ? 'Registered! Waiting for Admin approval'
+          : 'Registered. Ruby Invoice is ready!',
+    );
     widget.onDone();
   }
 
@@ -192,6 +231,14 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               style: TextStyle(fontSize: 12, height: 1.45, color: Color(0xFF7A6414)),
             ),
           ),
+        TextField(
+          controller: _businessC,
+          keyboardType: TextInputType.text,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(hintText: 'Business name', isDense: false),
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 14),
         Row(
           children: [
             Container(

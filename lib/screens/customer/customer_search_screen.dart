@@ -4,7 +4,7 @@ import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../billing/billing_screen.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 import '../ledger/ledger_screen.dart';
 import 'customer_form_screen.dart';
 

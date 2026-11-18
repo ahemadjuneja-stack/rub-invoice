@@ -7,7 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import '../core/formatters.dart';
-import '../data/models.dart';
+import '../models/models.dart';
 
 /// Bill PDFs in two formats: 80mm thermal receipt and A5 letterhead.
 /// DejaVu fonts are bundled (assets/fonts/) so the rupee symbol prints

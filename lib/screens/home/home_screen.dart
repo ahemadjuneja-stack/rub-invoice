@@ -2,18 +2,19 @@ import 'package:flutter/material.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
-import '../../data/models.dart';
+import '../../models/models.dart';
 import '../../data/repo.dart';
 import '../../services/package_info_helper.dart';
 import '../../services/sync_service.dart';
 import '../../services/update_service.dart';
 import '../backup/backup_screen.dart';
 import '../bills/bill_view_screen.dart';
-import '../common/widgets.dart';
+import '../../widgets/widgets.dart';
 import '../customer/customer_search_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../reports/reports_screen.dart';
 import '../settings/settings_screen.dart';
+import '../sync/sync_status_screen.dart';
 
 /// Home: Billing tab (today + yesterday bills) and Menu tab.
 class HomeScreen extends StatefulWidget {
@@ -258,33 +259,83 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // ---------------- Menu tab ----------------
 
   Widget _menuTab() {
-    return GridView.count(
-      crossAxisCount: 2,
+    return ListView(
       padding: const EdgeInsets.all(16),
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: 1.35,
       children: [
-        _menuCard(Icons.people_alt_outlined, 'Customers', () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)),
-          );
-        }),
-        _menuCard(Icons.inventory_2_outlined, 'Inventory', () {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const InventoryScreen()));
-        }),
-        _menuCard(Icons.ssid_chart, 'Reports', () {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportsScreen()));
-        }),
-        _menuCard(Icons.picture_as_pdf_outlined, 'Bill Format', () {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-        }),
-        _menuCard(Icons.backup_outlined, 'Backup & Restore', () {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()));
-        }),
-        _menuCard(Icons.system_update_outlined, 'Check Updates', _checkUpdate),
-        _menuCard(Icons.info_outline, 'About', _about),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 1.5,
+          children: [
+            _menuCard(Icons.inventory_2_outlined, 'Inventory (Item Master)', () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const InventoryScreen()));
+            }),
+            _menuCard(Icons.book_outlined, 'Customer Ledger (Jama / Udhar)', () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)),
+              );
+            }),
+            _menuCard(Icons.ssid_chart, 'Sales Reports', () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportsScreen()));
+            }),
+            _menuCard(Icons.picture_as_pdf_outlined, 'Bill Format & PDF / Share', () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+            }),
+            _menuCard(Icons.cloud_sync_outlined, 'Cloud Sync Status', () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const SyncStatusScreen()));
+            }),
+            _menuCard(Icons.people_alt_outlined, 'Customers', () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)),
+              );
+            }),
+          ],
+        ),
+        const SectionHeader('More'),
+        Card(
+          color: Colors.white,
+          elevation: 1,
+          shadowColor: Colors.black12,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: Ruby.line),
+          ),
+          child: Column(
+            children: [
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.backup_outlined, color: Ruby.ruby, size: 20),
+                title: const Text('Backup & Restore', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
+                onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()));
+                },
+              ),
+              const Divider(height: 1, indent: 16, endIndent: 16),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.system_update_outlined, color: Ruby.ruby, size: 20),
+                title: const Text('Check Updates', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
+                onTap: _checkUpdate,
+              ),
+              const Divider(height: 1, indent: 16, endIndent: 16),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.info_outline, color: Ruby.ruby, size: 20),
+                title: const Text('About', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
+                onTap: _about,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
       ],
     );
   }

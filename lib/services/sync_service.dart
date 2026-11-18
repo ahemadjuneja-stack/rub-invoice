@@ -8,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../data/db.dart';
 import '../data/repo.dart';
+import 'access_service.dart';
 
 enum SyncStatus { offline, syncing, synced, error }
 
@@ -87,6 +88,10 @@ class SyncService {
       await _pushAll(db);
       await _pullAll(db);
       status.value = SyncStatus.synced;
+      // Spec: verify the access rules on every background sync too
+      // (status active / not expired / approved device). The admin
+      // kill-switch reacts within one sync cycle as a safety net.
+      await AccessService.instance.verifyOnce();
     } catch (e) {
       debugPrint('[sync] error: $e');
       status.value = SyncStatus.error;

@@ -27,6 +27,15 @@ dependencies:
   crypto: ^3.0.5
   shared_preferences: ^2.3.3
 
+  # Exact decimal arithmetic (0% rounding / floating-point error)
+  decimal: ^3.2.1
+
+  # Iterable helpers (firstOrNull etc.)
+  collection: ^1.19.0
+
+  # Unique Device ID for multi-device access control (max 2 devices)
+  device_info_plus: ^11.3.3
+
   # PDF bills & backup share
   pdf: ^3.11.1
   share_plus: ^10.0.3
