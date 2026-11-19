@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -167,7 +168,7 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
                 const SizedBox(height: 16),
                 const SectionHeader('Shop details', color: Ruby.ruby),
                 const SizedBox(height: 6),
-                _field(_shopC, 'Shop / Business name', FontWeight.w600),
+                _field(_shopC, 'Shop / Business name', weight: FontWeight.w600),
                 const SizedBox(height: 12),
                 _field(_ownerC, 'Owner name'),
                 const SizedBox(height: 12),
@@ -291,10 +292,10 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Ruby.line),
               ),
-              child: exists
+              child: (file != null && file.existsSync())
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(9),
-                      child: Image.file(file!, fit: BoxFit.cover),
+                      child: Image.file(file, fit: BoxFit.cover),
                     )
                   : const Icon(Icons.image_outlined, color: Ruby.faint),
             ),

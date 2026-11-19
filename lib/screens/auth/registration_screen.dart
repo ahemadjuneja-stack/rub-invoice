@@ -122,7 +122,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             pinSalt: stored.salt,
           );
         } catch (e) {
-          _error('Could not create account: $e');
+          if (!mounted) return;
+          setState(() => _busy = false);
+          showSnack(context, 'Could not create account: $e', error: true);
           return;
         }
       }

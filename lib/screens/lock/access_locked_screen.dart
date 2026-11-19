@@ -144,7 +144,7 @@ class AccessLockedScreen extends StatelessWidget {
                         value: info.businessName,
                       ),
                     if (info != null && reason == AccessState.deviceLimit)
-                      _deviceList(info),
+                      _deviceList(context, info),
                     const SizedBox(height: 20),
                     // Contact / renew actions (spec).
                     if (reason == AccessState.blocked ||
@@ -241,7 +241,7 @@ class AccessLockedScreen extends StatelessWidget {
 
   /// The 2 registered devices with their model names and a Remove button
   /// each - self-service from the Device Limit screen (spec).
-  Widget _deviceList(AccountInfo info) {
+  Widget _deviceList(BuildContext context, AccountInfo info) {
     final devices = info.registeredDevices;
     return Container(
       width: double.infinity,
