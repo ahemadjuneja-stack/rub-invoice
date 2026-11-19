@@ -37,10 +37,12 @@ and the SAME app logo. It reads/manages ONLY the `users` and
    Authentication -> Settings -> **Authorized domains** -> add the
    domain where this PWA is hosted, e.g.
    `ahemadjuneja-stack.github.io`.
-4. **Deploy to GitHub Pages (automatic):** the workflow
-   `.github/workflows/admin-pages.yml` publishes this folder on every
-   push to `main`. Enable it once:
-   Repo **Settings -> Pages -> Source: GitHub Actions**, then open
+4. **Deploy to GitHub Pages (automatic after a one-time toggle):**
+   Repo **Settings -> Pages -> Source: GitHub Actions** (the workflow
+   token cannot enable Pages itself - this one tap is needed once),
+   then Actions tab -> latest **Deploy Ruby Key** run -> **Re-run
+   jobs**. The workflow publishes `ruby-key-admin/` on every push to
+   `main` afterwards. Open
    `https://ahemadjuneja-stack.github.io/rub-invoice/`.
 5. **Deploy the security rules** (`docs/FIREBASE_SETUP.md`): the
    `users` / `subscriptions` / admin-email rules make sure ONLY the

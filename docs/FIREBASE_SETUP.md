@@ -83,8 +83,10 @@ Lives in [`/ruby-key-admin`](../ruby-key-admin/README.md). Setup:
 2. **Authorized domains**: Authentication -> Settings -> Authorized
    domains -> add `ahemadjuneja-stack.github.io`.
 3. **Publish the panel**: repo **Settings -> Pages** -> Source:
-   **GitHub Actions**. The workflow `admin-pages.yml` deploys
-   `ruby-key-admin/` on every push to main. Open:
+   **GitHub Actions** (one time - the workflow token cannot create the
+   Pages site itself). Then open the **Actions** tab -> pick the latest
+   **Deploy Ruby Key** run -> **Re-run jobs**. From then on every push
+   to `main` deploys automatically. Open:
    `https://ahemadjuneja-stack.github.io/rub-invoice/`
 4. Chrome on your phone -> open the URL -> menu -> **Add to Home
    screen** -> install as "Ruby Key".
