@@ -21,6 +21,7 @@ import '../inventory/inventory_screen.dart';
 import '../purchase/purchase_screen.dart';
 import '../reports/reports_screen.dart';
 import '../settings/settings_screen.dart';
+import '../settings/subscription_screen.dart';
 import '../sync/sync_status_screen.dart';
 
 /// Home: Billing tab (today + yesterday bills) and Menu tab.
@@ -35,6 +36,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
 
   bool _updateDialogOpen = false;
+
+  /// Periodic background update check while the app stays open.
+  Timer? _updateTimer;
+
+  /// An update that was found while the user was inside another screen
+  /// (billing, inventory...). The popup never interrupts bill entry -
+  /// it lands here and shows the moment the user is back on home.
+  String? _deferredUpdateTag;
 
   Map<String, List<Bill>> _bills = {};
   Map<String, (int, int)> _totals = {};
@@ -52,10 +61,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(_autoUpdateCheck());
     unawaited(_restorePendingUpdate());
     unawaited(_gateIfNeeded());
+    // Keep looking for releases while the app is open - a new version
+    // pops up on its own, no manual "Check Updates" needed.
+    _updateTimer = Timer.periodic(
+      const Duration(minutes: 20),
+      (_) => unawaited(_autoUpdateCheck()),
+    );
   }
 
   @override
   void dispose() {
+    _updateTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     RemoteConfigService.instance.config.removeListener(_onRemoteConfig);
     super.dispose();
@@ -63,7 +79,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _reload();
+    if (state == AppLifecycleState.resumed) {
+      // Coming back to the app (from launcher, call, WhatsApp...) is an
+      // app-open moment: refresh data AND look for updates.
+      _reload();
+      unawaited(_autoUpdateCheck());
+    }
   }
 
   Future<void> _reload() async {
@@ -83,6 +104,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _loading = false;
     });
     SyncService.instance.syncSoon();
+    _flushDeferredUpdate();
   }
 
   /// Opens the auto-saved draft straight in the billing screen.
@@ -128,6 +150,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final (has, tag) = await UpdateService.instance.check();
       if (!mounted) return;
       if (has) {
+        _deferredUpdateTag = null;
         await _rememberUpdateTag(tag);
         await _showUpdateDialog(tag: tag);
       } else {
@@ -192,20 +215,62 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Silent update check (max once per 6 hours). If a newer release is
-  /// out, its APK starts downloading in the background right away and
-  /// the update popup is shown on the main screen.
+  /// True when the home screen itself is on top (user is not inside
+  /// billing, inventory, ledger etc.). Auto popups must never disturb
+  /// bill entry.
+  bool _homeIsCurrentRoute() {
+    if (!mounted) return false;
+    return ModalRoute.of(context)?.isCurrent ?? false;
+  }
+
+  /// Shows a parked update popup as soon as the user is back on home.
+  void _flushDeferredUpdate() {
+    if (_updateDialogOpen || !_homeIsCurrentRoute()) return;
+    final tag = _deferredUpdateTag;
+    if (tag == null || tag.isEmpty) return;
+    _deferredUpdateTag = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showUpdateDialog(tag: tag);
+    });
+  }
+
+  /// "Later" hides the popup for 12 hours - but a NEWER release always
+  /// pops up immediately, snooze applies to that exact version only.
+  Future<void> _snoozeCurrentUpdate() async {
+    try {
+      final tag = UpdateService.instance.latestTag ?? '';
+      if (tag.isEmpty) return;
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString('update_snooze_tag', tag);
+      await sp.setInt(
+        'update_snooze_until',
+        DateTime.now().add(const Duration(hours: 12)).millisecondsSinceEpoch,
+      );
+    } catch (_) {}
+  }
+
+  bool _snoozed(String tag, SharedPreferences sp, int now) {
+    final snoozeTag = sp.getString('update_snooze_tag') ?? '';
+    final snoozeUntil = sp.getInt('update_snooze_until') ?? 0;
+    return snoozeTag == tag && now < snoozeUntil;
+  }
+
+  /// Silent update check - runs on app open, on every resume and every
+  /// 20 minutes while the app stays open (throttled to once per 15
+  /// minutes). If a newer release is out, its APK starts downloading in
+  /// the background right away and the popup shows on the main screen.
   Future<void> _autoUpdateCheck() async {
     try {
       final sp = await SharedPreferences.getInstance();
       final now = DateTime.now().millisecondsSinceEpoch;
       final last = sp.getInt('last_update_check') ?? 0;
-      // First run after an install/update always checks immediately,
-      // bypassing the 6-hour throttle - so a freshly updated app looks
-      // for an even newer release right away.
+      // First run after an install/update always checks immediately.
       final current = await PackageInfoHelper.version();
       final justUpdated = (sp.getString('last_update_check_version') ?? '') != current;
-      if (!justUpdated && now - last < 6 * 3600 * 1000) return;
+      if (!justUpdated && now - last < 15 * 60 * 1000) {
+        _flushDeferredUpdate();
+        return;
+      }
       await sp.setInt('last_update_check', now);
       await sp.setString('last_update_check_version', current);
       final (has, tag) = await UpdateService.instance.check();
@@ -216,9 +281,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       await _rememberUpdateTag(tag);
       unawaited(UpdateService.instance.downloadApk());
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _showUpdateDialog(tag: tag);
-      });
+      if (_snoozed(tag, sp, now)) {
+        // Same version the user pushed away recently - stay quiet, but
+        // keep the APK cached so "Check Updates" opens it instantly.
+        return;
+      }
+      if (_homeIsCurrentRoute()) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showUpdateDialog(tag: tag);
+        });
+      } else {
+        // Never interrupt bill entry - park it for the home screen.
+        _deferredUpdateTag = tag;
+      }
     } catch (_) {
       // auto check must never disturb the user
     }
@@ -256,6 +331,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _showUpdateDialog({required String tag, bool force = false}) {
     if (_updateDialogOpen && !force) return Future.value();
     _updateDialogOpen = true;
+    _deferredUpdateTag = null;
     unawaited(UpdateService.instance.downloadApk());
     return showDialog<void>(
       context: context,
@@ -350,7 +426,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             SizedBox(
                               width: double.infinity,
                               child: TextButton(
-                                onPressed: () => Navigator.pop(ctx),
+                                onPressed: () {
+                                  _snoozeCurrentUpdate();
+                                  Navigator.pop(ctx);
+                                },
                                 child: const Text('Later'),
                               ),
                             ),
@@ -425,7 +504,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 SizedBox(
                                   width: double.infinity,
                                   child: TextButton(
-                                    onPressed: () => Navigator.pop(ctx),
+                                    onPressed: () {
+                                      _snoozeCurrentUpdate();
+                                      Navigator.pop(ctx);
+                                    },
                                     child: const Text('Later'),
                                   ),
                                 ),
@@ -744,6 +826,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _menuCard(Icons.local_shipping_outlined, 'Purchase Invoices', () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseScreen()));
             }),
+            _menuCard(
+              Icons.workspace_premium_outlined,
+              'Subscription',
+              () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen()));
+              },
+              badge: 'Coming Soon',
+            ),
             if (rc.feature('ledger'))
               _menuCard(Icons.book_outlined, 'Customer Ledger (Jama / Udhar)', () {
                 Navigator.push(
@@ -815,7 +905,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _menuCard(IconData icon, String title, VoidCallback onTap) {
+  Widget _menuCard(IconData icon, String title, VoidCallback onTap,
+      {String? badge}) {
     return Card(
       color: Colors.white,
       elevation: 2,
@@ -837,6 +928,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               textAlign: TextAlign.center,
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Ruby.ink),
             ),
+            if (badge != null) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Ruby.rubyLight,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  badge,
+                  style: const TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.4,
+                      color: Ruby.ruby),
+                ),
+              ),
+            ],
           ],
         ),
       ),

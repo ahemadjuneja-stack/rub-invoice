@@ -275,6 +275,17 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
         paidNowPaise: paid,
         billDate: _billDate,
       );
+      // The bill is now safely in the database. Empty the cart FIRST so
+      // that dispose / lifecycle hooks can never re-persist the saved
+      // items as a "resume" draft. (That ghost draft made the same bill
+      // appear on the home screen after saving, and resuming it created
+      // a duplicate bill every time.)
+      setState(() {
+        _cart.clear();
+        _paidC.clear();
+        _payMode = 'udhar';
+        _billDate = Dt.todayStart();
+      });
       await BillDraftService.instance.clear(); // draft consumed
       SyncService.instance.syncSoon();
       if (!mounted) return;
