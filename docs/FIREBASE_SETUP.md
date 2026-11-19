@@ -9,6 +9,13 @@ data.
 > SMS delivery in India is unreliable (delays, carrier filtering, daily
 > quota). Google sign-in is instant and free.
 
+> **LOGIN IS CURRENTLY DISABLED** during the build phase:
+> `lib/app.dart` has `kLoginEnabled = false`, which opens the app straight
+> to the HomeScreen (no sign-in, no PIN, no admin gate). To re-enable the
+> full login flow later, set that constant back to `true` - no other code
+> change is needed. This document describes the Google sign-in setup to
+> complete when login comes back.
+
 ## 1. Create the Firebase project
 
 1. Go to <https://console.firebase.google.com> and click **Add project**.
