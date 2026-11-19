@@ -144,3 +144,50 @@ Future<void> showSnack(BuildContext context, String message, {bool error = false
     ),
   );
 }
+
+/// RUBI brand lockup: origami R mark + RUBI wordmark + RESIDENCIAS tagline.
+/// Matches the printed brand identity (assets/icon/logo_r.png).
+class BrandMark extends StatelessWidget {
+  final double markHeight;
+  final bool onDark;
+  const BrandMark({super.key, this.markHeight = 76, this.onDark = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final wordColor = onDark ? Colors.white : const Color(0xFF3A3A3A);
+    final tagColor = onDark ? Colors.white70 : const Color(0xFF9E9E9E);
+    final lineColor = onDark ? Colors.white24 : const Color(0xFFD0D0D0);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Image.asset('assets/icon/logo_r.png',
+            height: markHeight, filterQuality: FilterQuality.high),
+        SizedBox(height: markHeight * 0.15),
+        Text(
+          'RUBI',
+          style: TextStyle(
+            fontSize: markHeight * 0.26,
+            fontWeight: FontWeight.w800,
+            letterSpacing: markHeight * 0.11,
+            color: wordColor,
+          ),
+        ),
+        SizedBox(height: markHeight * 0.08),
+        SizedBox(
+          width: markHeight * 1.15,
+          child: Divider(height: 1, thickness: 1, color: lineColor),
+        ),
+        SizedBox(height: markHeight * 0.08),
+        Text(
+          'RESIDENCIAS',
+          style: TextStyle(
+            fontSize: markHeight * 0.115,
+            fontWeight: FontWeight.w500,
+            letterSpacing: markHeight * 0.055,
+            color: tagColor,
+          ),
+        ),
+      ],
+    );
+  }
+}

@@ -22,6 +22,8 @@ class PendingApprovalScreen extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                const BrandMark(markHeight: 64),
+                const SizedBox(height: 26),
                 Container(
                   padding: const EdgeInsets.all(22),
                   decoration: const BoxDecoration(

@@ -182,19 +182,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.receipt_long, color: Ruby.ruby, size: 48),
-              const SizedBox(height: 10),
-              const Text(
-                'RUBY INVOICE',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 4,
-                  color: Ruby.ink,
-                ),
-              ),
-              const SizedBox(height: 4),
+              const BrandMark(markHeight: 88),
+              const SizedBox(height: 12),
               Text(
                 _step == 'details'
                     ? 'Register with your mobile number'

@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme.dart';
 import '../../services/pin_service.dart';
+import '../../widgets/widgets.dart';
 
 /// Daily unlock screen: 4-digit PIN with a big numeric keypad.
 class PinLockScreen extends StatefulWidget {
@@ -65,11 +66,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
         child: Column(
           children: [
             const Spacer(flex: 2),
-            Icon(
-              _error ? Icons.lock_open : Icons.lock_outline,
-              size: 44,
-              color: _error ? Colors.red : Ruby.ruby,
-            ),
+            const BrandMark(markHeight: 72),
             const SizedBox(height: 12),
             Text(
               _error ? 'Wrong PIN. Try again' : 'Enter PIN',
