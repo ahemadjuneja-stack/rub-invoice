@@ -31,6 +31,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
 
+  bool _updateDialogOpen = false;
+
   Map<String, List<Bill>> _bills = {};
   Map<String, (int, int)> _totals = {};
   Map<String, String> _cities = {}; // customerId -> city (bill tiles)
@@ -44,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     RemoteConfigService.instance.config.addListener(_onRemoteConfig);
     _reload();
     unawaited(_autoUpdateCheck());
+    unawaited(_restorePendingUpdate());
     unawaited(_gateIfNeeded());
   }
 
@@ -101,8 +104,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final (has, tag) = await UpdateService.instance.check();
       if (!mounted) return;
       if (has) {
+        await _rememberUpdateTag(tag);
         await _showUpdateDialog(tag: tag);
       } else {
+        await _forgetUpdateTag();
         showSnack(context, 'You are on the latest version');
       }
     } catch (e) {
@@ -110,18 +115,86 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _rememberUpdateTag(String tag) async {
+    if (tag.isEmpty) return;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString('known_update_tag', tag);
+    } catch (_) {}
+  }
+
+  Future<void> _forgetUpdateTag() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.remove('known_update_tag');
+    } catch (_) {}
+  }
+
+  /// After an app restart: if an update APK was already downloaded but
+  /// never installed, bring the popup back so the user can finish it.
+  Future<void> _restorePendingUpdate() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final tag = sp.getString('known_update_tag') ?? '';
+      if (tag.isEmpty) return;
+      final current = await PackageInfoHelper.version();
+      if (!UpdateService.isNewerThan(tag, current)) {
+        await _forgetUpdateTag();
+        return;
+      }
+      final ok = await UpdateService.instance.adoptCachedApk(tag);
+      if (!mounted) return;
+      if (ok) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showUpdateDialog(tag: tag);
+        });
+        return;
+      }
+      // Cached file was cleared by the OS - refresh the release quietly
+      // and start the download again so the popup can offer it.
+      final (has, t) = await UpdateService.instance.check();
+      if (!mounted) return;
+      if (!has) {
+        await _forgetUpdateTag();
+        return;
+      }
+      await _rememberUpdateTag(t);
+      unawaited(UpdateService.instance.downloadApk());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showUpdateDialog(tag: t);
+      });
+    } catch (_) {
+      // never disturb startup
+    }
+  }
+
   /// Silent update check (max once per 6 hours). If a newer release is
-  /// out, its APK starts downloading in the background right away - the
-  /// user later just taps "Install".
+  /// out, its APK starts downloading in the background right away and
+  /// the update popup is shown on the main screen.
   Future<void> _autoUpdateCheck() async {
     try {
       final sp = await SharedPreferences.getInstance();
       final now = DateTime.now().millisecondsSinceEpoch;
       final last = sp.getInt('last_update_check') ?? 0;
-      if (now - last < 6 * 3600 * 1000) return;
+      // First run after an install/update always checks immediately,
+      // bypassing the 6-hour throttle - so a freshly updated app looks
+      // for an even newer release right away.
+      final current = await PackageInfoHelper.version();
+      final justUpdated = (sp.getString('last_update_check_version') ?? '') != current;
+      if (!justUpdated && now - last < 6 * 3600 * 1000) return;
       await sp.setInt('last_update_check', now);
-      final (has, _) = await UpdateService.instance.check();
-      if (has) unawaited(UpdateService.instance.downloadApk());
+      await sp.setString('last_update_check_version', current);
+      final (has, tag) = await UpdateService.instance.check();
+      if (!mounted) return;
+      if (!has) {
+        await _forgetUpdateTag();
+        return;
+      }
+      await _rememberUpdateTag(tag);
+      unawaited(UpdateService.instance.downloadApk());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showUpdateDialog(tag: tag);
+      });
     } catch (_) {
       // auto check must never disturb the user
     }
@@ -153,101 +226,211 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Download-progress dialog that turns into an Install button when the
-  /// APK has landed. With force=true it cannot be dismissed.
+  /// Ruby-branded update popup: white card, ruby badge, and a ruby
+  /// loading line whose front edge shines while the APK downloads.
+  /// With force=true it cannot be dismissed.
   Future<void> _showUpdateDialog({required String tag, bool force = false}) {
+    if (_updateDialogOpen && !force) return Future.value();
+    _updateDialogOpen = true;
     unawaited(UpdateService.instance.downloadApk());
     return showDialog<void>(
       context: context,
       barrierDismissible: !force,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
       builder: (ctx) => PopScope(
         canPop: !force,
-        child: AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(
-            force ? 'Update required (v$tag)' : 'Update available: v$tag',
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-          ),
-          content: ValueListenableBuilder<String?>(
-            valueListenable: UpdateService.instance.readyPath,
-            builder: (context, path, _) {
-              if (path != null) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        child: Dialog(
+          backgroundColor: Colors.white,
+          elevation: 14,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    const Icon(Icons.check_circle_outline, color: Colors.green, size: 34),
-                    const SizedBox(height: 12),
-                    Text(
-                      'v$tag downloaded and ready to install.',
-                      style: const TextStyle(fontSize: 13.5, color: Ruby.muted),
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Ruby.rubyLight,
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: const Icon(Icons.rocket_launch_outlined,
+                          color: Ruby.ruby, size: 24),
                     ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () => UpdateService.instance.install(),
-                        icon: const Icon(Icons.install_mobile, size: 20),
-                        label: const Text('Install now'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            force ? 'Update required' : 'New update available',
+                            style: const TextStyle(
+                                fontSize: 16.5,
+                                fontWeight: FontWeight.w800,
+                                color: Ruby.ink),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Ruby Invoice v$tag',
+                            style: const TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                                color: Ruby.ruby),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                );
-              }
-              return ValueListenableBuilder<bool>(
-                valueListenable: UpdateService.instance.downloading,
-                builder: (context, busy, _) => ValueListenableBuilder<double>(
-                  valueListenable: UpdateService.instance.downloadProgress,
-                  builder: (context, p, _) {
-                    final failed = !busy && p == 0 && UpdateService.instance.lastError != null;
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          force
-                              ? 'A newer version is required. Downloading in background…'
-                              : 'Downloading in background…',
-                          style: const TextStyle(fontSize: 13.5, height: 1.45, color: Ruby.muted),
-                        ),
-                        const SizedBox(height: 14),
-                        LinearProgressIndicator(
-                          value: busy ? (p > 0 ? p : null) : 0.0,
-                          minHeight: 6,
-                          color: Ruby.ruby,
-                          backgroundColor: Ruby.rubyLight,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          busy && p > 0
-                              ? '${(p * 100).toStringAsFixed(0)}% downloaded'
-                              : (failed ? 'Download failed (offline?)' : 'Starting download…'),
-                          style: const TextStyle(fontSize: 12, color: Ruby.faint),
-                        ),
-                        if (failed) ...[
-                          const SizedBox(height: 14),
-                          OutlinedButton(
-                            onPressed: () {
-                              UpdateService.instance.lastError = null;
-                              unawaited(UpdateService.instance.downloadApk());
-                            },
-                            child: const Text('Retry'),
+                ),
+                const SizedBox(height: 16),
+                ValueListenableBuilder<String?>(
+                  valueListenable: UpdateService.instance.readyPath,
+                  builder: (context, path, _) {
+                    if (path != null) {
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.check_circle_rounded,
+                                  color: Ruby.ruby, size: 22),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Download complete - ready to install',
+                                  style: TextStyle(
+                                      fontSize: 13.5,
+                                      height: 1.4,
+                                      color: Ruby.muted),
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 46,
+                            child: ElevatedButton.icon(
+                              onPressed: () => UpdateService.instance.install(),
+                              icon: const Icon(Icons.install_mobile, size: 20),
+                              label: const Text('Install now'),
+                            ),
+                          ),
+                          if (!force)
+                            SizedBox(
+                              width: double.infinity,
+                              child: TextButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                child: const Text('Later'),
+                              ),
+                            ),
                         ],
-                      ],
+                      );
+                    }
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: UpdateService.instance.downloading,
+                      builder: (context, busy, _) => ValueListenableBuilder<double>(
+                        valueListenable: UpdateService.instance.downloadProgress,
+                        builder: (context, p, _) {
+                          final failed = !busy &&
+                              p == 0 &&
+                              UpdateService.instance.lastError != null;
+                          final indeterminate = p <= 0 && !failed;
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                force
+                                    ? 'A newer version is required to continue. Please wait...'
+                                    : 'Downloading the new version in background...',
+                                style: const TextStyle(
+                                    fontSize: 13, height: 1.45, color: Ruby.muted),
+                              ),
+                              const SizedBox(height: 14),
+                              RubyShimmerProgress(
+                                value: indeterminate ? null : p,
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Text(
+                                    failed
+                                        ? 'Download failed (offline?)'
+                                        : (busy
+                                            ? 'Downloading update...'
+                                            : 'Starting download...'),
+                                    style: const TextStyle(
+                                        fontSize: 12, color: Ruby.faint),
+                                  ),
+                                  const Spacer(),
+                                  if (busy && p > 0)
+                                    Text(
+                                      '${(p * 100).toStringAsFixed(0)}%',
+                                      style: const TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w800,
+                                          color: Ruby.ruby),
+                                    ),
+                                ],
+                              ),
+                              if (failed) ...[
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 44,
+                                  child: OutlinedButton.icon(
+                                    onPressed: () {
+                                      UpdateService.instance.lastError = null;
+                                      unawaited(UpdateService.instance
+                                          .downloadApk());
+                                    },
+                                    icon: const Icon(Icons.refresh, size: 20),
+                                    label: const Text('Retry'),
+                                  ),
+                                ),
+                              ],
+                              if (!force && !failed) ...[
+                                const SizedBox(height: 4),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('Later'),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
                     );
                   },
                 ),
-              );
-            },
+                const SizedBox(height: 10),
+                const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.lock_outline, size: 12, color: Ruby.faint),
+                    SizedBox(width: 5),
+                    Text(
+                      'Your data stays safe during updates',
+                      style: TextStyle(fontSize: 11, color: Ruby.faint),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          actions: [
-            if (!force)
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Later')),
-          ],
         ),
       ),
-    );
+    ).whenComplete(() => _updateDialogOpen = false);
   }
 
   Future<void> _about() async {

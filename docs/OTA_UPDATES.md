@@ -26,6 +26,16 @@ banner on the Billing tab); when done the user just taps **Install** -
 `open_filex` hands the file to the Android package installer
 (`REQUEST_INSTALL_PACKAGES` is already declared).
 
+**Update popup (v0.2.6+):** when a newer release is found - by the silent
+check, *Menu -> Check Updates*, or the first open after installing/updating
+the app (version change bypasses the 6-hour throttle) - a white + ruby
+popup opens on the main screen with the ruby shimmer loading line (a small
+shining highlight glides at the leading edge while downloading) and turns
+into an **Install now** button when the APK is ready. The popup also
+re-opens after an app restart if a downloaded APK is still waiting in the
+cache (`known_update_tag` preference + `adoptCachedApk`); "Later" dismisses
+it and the Billing-tab banner keeps offering the install until done.
+
 > Note: this pipeline is for APK distribution outside the Play Store
 > (direct-to-customer, WhatsApp groups, website). The Play Store has its
 > own update mechanism.

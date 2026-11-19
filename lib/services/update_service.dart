@@ -53,7 +53,9 @@ class UpdateService {
     final latest = tag.replaceFirst(RegExp(r'^v'), '').trim();
     _latestTag = latest.isEmpty ? null : latest;
     _apkUrl = _firstApkUrl(body);
-    return (_isNewer(latest, info.version), tag.isEmpty ? latest : tag);
+    // Always return the clean tag (no leading 'v') - callers display
+    // 'v$tag' themselves and compare it with the installed version.
+    return (_isNewer(latest, info.version), latest);
   }
 
   String? _firstApkUrl(Map<String, dynamic> body) {
@@ -84,6 +86,22 @@ class UpdateService {
     if (minVersion.isEmpty) return false;
     final info = await PackageInfo.fromPlatform();
     return isNewerThan(minVersion, info.version);
+  }
+
+  /// Re-adopts a previously downloaded APK for [tag] after an app
+  /// restart. Never touches the network; returns true when the cached
+  /// file is still on disk and [readyPath] has been restored.
+  Future<bool> adoptCachedApk(String tag) async {
+    final clean = tag.replaceFirst(RegExp(r'^v'), '').trim();
+    if (clean.isEmpty) return false;
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/ruby_invoice_$clean.apk');
+    if (await file.exists() && await file.length() > 0) {
+      _latestTag = clean;
+      readyPath.value = file.path;
+      return true;
+    }
+    return false;
   }
 
   /// Streams the latest release APK into the app cache. Safe to call

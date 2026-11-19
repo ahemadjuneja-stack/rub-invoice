@@ -191,3 +191,120 @@ class BrandMark extends StatelessWidget {
     );
   }
 }
+
+/// Ruby-brand rounded loading line with an animated shine: a small
+/// bright ruby highlight pulses and glides at the leading edge of the
+/// fill while the download runs. [value] is 0..1; pass null for an
+/// indeterminate sweep (e.g. while the download is starting).
+class RubyShimmerProgress extends StatefulWidget {
+  const RubyShimmerProgress({
+    super.key,
+    required this.value,
+    this.height = 8,
+  });
+
+  final double? value;
+  final double height;
+
+  @override
+  State<RubyShimmerProgress> createState() => _RubyShimmerProgressState();
+}
+
+class _RubyShimmerProgressState extends State<RubyShimmerProgress>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1500),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctl,
+      builder: (context, _) => ClipRRect(
+        borderRadius: BorderRadius.circular(widget.height / 2),
+        child: SizedBox(
+          height: widget.height,
+          width: double.infinity,
+          child: CustomPaint(
+            painter: _RubyShimmerPainter(value: widget.value, t: _ctl.value),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RubyShimmerPainter extends CustomPainter {
+  _RubyShimmerPainter({required this.value, required this.t});
+
+  final double? value;
+  final double t; // looping 0..1
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = size.height / 2;
+
+    // Track.
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(r)),
+      Paint()..color = Ruby.rubyLight,
+    );
+
+    final v = value;
+    if (v == null) {
+      // Indeterminate: one soft ruby band sweeping across the track.
+      final bandW = size.width * 0.4;
+      final x = -bandW + (size.width + bandW * 2) * t;
+      final rect = Rect.fromLTWH(x, 0, bandW, size.height);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, Radius.circular(r)),
+        Paint()
+          ..shader = LinearGradient(colors: [
+            Ruby.ruby.withValues(alpha: 0),
+            Ruby.ruby.withValues(alpha: 0.85),
+            Ruby.ruby.withValues(alpha: 0),
+          ]).createShader(rect),
+      );
+      return;
+    }
+
+    final fill = v.clamp(0.0, 1.0);
+    if (fill <= 0) return;
+    final w = size.width * fill;
+
+    // Filled part: deep ruby gradient.
+    final fillRect = Rect.fromLTWH(0, 0, w, size.height);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(fillRect, Radius.circular(r)),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: const [Ruby.rubyDark, Ruby.ruby],
+        ).createShader(fillRect),
+    );
+
+    // Shining head at the front edge: a small bright band whose glow
+    // pulses (0..1..0) as the fill travels.
+    final pulse = t < 0.5 ? t * 2 : (1 - t) * 2;
+    final headW = size.height * 1.8;
+    final headLeft = w - headW <= 0 ? 0.0 : w - headW;
+    final head = Rect.fromLTWH(headLeft, 0, headW, size.height);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(head, Radius.circular(r)),
+      Paint()
+        ..color = Color.lerp(Ruby.ruby, Colors.white, 0.45 + 0.3 * pulse)!
+        ..maskFilter = MaskFilter.blur(BlurStyle.solid, 2.5 + 2.5 * pulse),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RubyShimmerPainter old) => true;
+}
