@@ -16,6 +16,9 @@ permissions:
   pages: write
   id-token: write
   contents: read
+  # Needed once so configure-pages (enablement: true) can CREATE the
+  # Pages site itself - after that this line is harmless.
+  administration: write
 
 concurrency:
   group: "pages"
