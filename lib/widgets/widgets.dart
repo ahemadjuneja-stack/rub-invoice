@@ -5,6 +5,82 @@ import '../services/sync_service.dart';
 
 /// Small reusable widgets shared across screens.
 
+/// AppBar with the Ruby Invoice brand chip - a white rounded tile
+/// holding the origami "R" - before the title. Used on every screen so
+/// the Ruby mark is always visible, in a crisp white-on-ruby treatment
+/// that matches the app icon identity.
+class RubyAppBar extends StatelessWidget implements PreferredSizeWidget {
+  final String title;
+  final String? subtitle;
+  final List<Widget>? actions;
+  final PreferredSizeWidget? bottom;
+
+  const RubyAppBar({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.actions,
+    this.bottom,
+  });
+
+  @override
+  Size get preferredSize =>
+      Size.fromHeight(kToolbarHeight + (bottom?.preferredSize.height ?? 0));
+
+  @override
+  Widget build(BuildContext context) {
+    return AppBar(
+      titleSpacing: 12,
+      title: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Image.asset(
+              'assets/icon/logo_r.png',
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.high,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700),
+                ),
+                if (subtitle != null)
+                  Text(
+                    subtitle!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Color(0xFFF3B7BC),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      actions: actions,
+      bottom: bottom,
+    );
+  }
+}
+
 class SectionHeader extends StatelessWidget {
   final String text;
   final Color color;

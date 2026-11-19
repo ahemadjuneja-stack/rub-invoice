@@ -83,8 +83,8 @@ class _BillViewScreenState extends State<BillViewScreen> {
   Widget build(BuildContext context) {
     final bill = _bill;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(bill == null ? 'Bill' : 'Bill #${bill.billNo}'),
+      appBar: RubyAppBar(
+        title: bill == null ? 'Bill' : 'Bill #${bill.billNo}',
         actions: [
           IconButton(onPressed: bill == null ? null : _share, icon: const Icon(Icons.share)),
           IconButton(onPressed: bill == null ? null : _delete, icon: const Icon(Icons.delete_outline)),

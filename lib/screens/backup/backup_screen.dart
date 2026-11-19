@@ -75,7 +75,7 @@ class _BackupScreenState extends State<BackupScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Backup & Restore')),
+      appBar: RubyAppBar(title: 'Backup & Restore'),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

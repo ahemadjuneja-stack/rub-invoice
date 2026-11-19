@@ -77,7 +77,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Cloud Sync Status')),
+      appBar: RubyAppBar(title: 'Cloud Sync Status'),
       body: RefreshIndicator(
         color: Ruby.ruby,
         onRefresh: _load,

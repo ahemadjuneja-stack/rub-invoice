@@ -7,12 +7,14 @@ import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../data/repo.dart';
+import '../../services/bill_draft_service.dart';
 import '../../services/package_info_helper.dart';
 import '../../services/remote_config.dart';
 import '../../services/sync_service.dart';
 import '../../services/update_service.dart';
 import '../backup/backup_screen.dart';
 import '../bills/bill_view_screen.dart';
+import '../billing/billing_screen.dart';
 import '../../widgets/widgets.dart';
 import '../customer/customer_search_screen.dart';
 import '../inventory/inventory_screen.dart';
@@ -36,6 +38,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Map<String, List<Bill>> _bills = {};
   Map<String, (int, int)> _totals = {};
   Map<String, String> _cities = {}; // customerId -> city (bill tiles)
+  BillDraft? _draft; // unfinished in-progress bill (auto-saved)
   bool _loading = true;
   bool _gating = false;
 
@@ -69,14 +72,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final cities = await Repo.instance.citiesFor(
       bills.values.expand((l) => l).map((b) => b.customerId),
     );
+    final draft = await BillDraftService.instance.load();
     if (!mounted) return;
     setState(() {
       _bills = bills;
       _totals = totals;
       _cities = cities;
+      _draft = (draft != null && draft.lines.isNotEmpty) ? draft : null;
       _loading = false;
     });
     SyncService.instance.syncSoon();
+  }
+
+  /// Opens the auto-saved draft straight in the billing screen.
+  Future<void> _resumeDraft() async {
+    final d = _draft;
+    if (d == null) return;
+    final cust = await Repo.instance.getCustomer(d.customerId);
+    if (!mounted) return;
+    if (cust == null) {
+      await BillDraftService.instance.clear();
+      await _reload();
+      return;
+    }
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => BillingScreen(customer: cust)),
+    );
+    _reload();
   }
 
   Future<void> _openNewBill() async {
@@ -456,8 +479,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_tab == 0 ? 'Recent Bills' : 'Menu'),
+      appBar: RubyAppBar(
+        title: _tab == 0 ? 'Recent Bills' : 'Menu',
         actions: const [SyncChip()],
       ),
       body: ValueListenableBuilder<RemoteConfig>(
@@ -501,6 +524,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         children: [
           _noticeBanner(rc),
           _updateBanner(),
+          if (_draft != null) _draftBanner(_draft!),
           _summaryCard(tToday, tYesterday),
           for (final key in [today, yesterday]) ...[
             SectionHeader(Dt.labelFor(key)),
@@ -517,6 +541,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ],
           const SizedBox(height: 24),
         ],
+      ),
+    );
+  }
+
+  /// "Resume unfinished bill" tile for the auto-saved draft.
+  Widget _draftBanner(BillDraft d) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Ruby.ruby, width: 1.2),
+      ),
+      child: ListTile(
+        dense: true,
+        leading: const Icon(Icons.receipt_long, color: Ruby.ruby),
+        title: const Text(
+          'Resume unfinished bill',
+          style: TextStyle(
+              fontSize: 13.5, fontWeight: FontWeight.w800, color: Ruby.ruby),
+        ),
+        subtitle: Text(
+          '${d.customerName}  •  ${Money.fmt(d.totalPaise)}  •  tap to continue',
+          style: const TextStyle(fontSize: 12, color: Ruby.muted),
+        ),
+        trailing: const Icon(Icons.arrow_forward, size: 18, color: Ruby.ruby),
+        onTap: _resumeDraft,
       ),
     );
   }

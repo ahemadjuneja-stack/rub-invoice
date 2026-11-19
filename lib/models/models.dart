@@ -11,8 +11,10 @@ import '../core/formatters.dart';
 class Customer {
   final String id;
   final String name;
+  final String shopName;
   final String city;
   final String phone;
+  final String address;
   final int openingBalancePaise; // +ve = customer already owed this
   final int createdAt;
   final int updatedAt;
@@ -22,8 +24,10 @@ class Customer {
   Customer({
     required this.id,
     required this.name,
+    this.shopName = '',
     this.city = '',
     this.phone = '',
+    this.address = '',
     this.openingBalancePaise = 0,
     required this.createdAt,
     required this.updatedAt,
@@ -34,8 +38,10 @@ class Customer {
   factory Customer.fromMap(Map<String, Object?> m) => Customer(
         id: m['id'] as String,
         name: m['name'] as String,
+        shopName: (m['shop_name'] ?? '') as String,
         city: (m['city'] ?? '') as String,
         phone: (m['phone'] ?? '') as String,
+        address: (m['address'] ?? '') as String,
         openingBalancePaise: (m['opening_balance_paise'] ?? 0) as int,
         createdAt: (m['created_at'] ?? 0) as int,
         updatedAt: (m['updated_at'] ?? 0) as int,
@@ -46,8 +52,10 @@ class Customer {
   Map<String, Object?> toMap() => {
         'id': id,
         'name': name,
+        'shop_name': shopName,
         'city': city,
         'phone': phone,
+        'address': address,
         'opening_balance_paise': openingBalancePaise,
         'created_at': createdAt,
         'updated_at': updatedAt,
@@ -64,8 +72,10 @@ class Customer {
   static Customer fromSync(Map<String, Object?> m) => Customer(
         id: m['id'] as String,
         name: m['name'] as String,
+        shopName: (m['shop_name'] ?? '') as String,
         city: (m['city'] ?? '') as String,
         phone: (m['phone'] ?? '') as String,
+        address: (m['address'] ?? '') as String,
         openingBalancePaise: (m['opening_balance_paise'] ?? 0) as int,
         createdAt: (m['created_at'] ?? 0) as int,
         updatedAt: (m['updated_at'] ?? 0) as int,
@@ -73,12 +83,14 @@ class Customer {
         dirty: 0,
       );
 
-  Customer copyWith({String? name, String? city, String? phone, int? openingBalancePaise, int? updatedAt}) =>
+  Customer copyWith({String? name, String? shopName, String? city, String? phone, String? address, int? openingBalancePaise, int? updatedAt}) =>
       Customer(
         id: id,
         name: name ?? this.name,
+        shopName: shopName ?? this.shopName,
         city: city ?? this.city,
         phone: phone ?? this.phone,
+        address: address ?? this.address,
         openingBalancePaise: openingBalancePaise ?? this.openingBalancePaise,
         createdAt: createdAt,
         updatedAt: updatedAt ?? this.updatedAt,

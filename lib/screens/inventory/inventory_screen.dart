@@ -52,10 +52,27 @@ class _InventoryScreenState extends State<InventoryScreen> {
     _reload();
   }
 
+  /// Delete straight from the list (with confirmation). The product is
+  /// tombstoned, so old bills keep their record and sync propagates it.
+  Future<void> _deleteProduct(Product p) async {
+    final ok = await confirmDialog(
+      context,
+      title: 'Delete product?',
+      message: '"${p.name}" will be removed from inventory and billing suggestions. Old bills keep their record.',
+      ok: 'Delete',
+      dangerous: true,
+    );
+    if (!ok) return;
+    await Repo.instance.deleteProduct(p.id);
+    SyncService.instance.syncSoon();
+    _reload();
+    if (mounted) showSnack(context, '"${p.name}" deleted');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Inventory')),
+      appBar: RubyAppBar(title: 'Inventory'),
       body: Column(
         children: [
           Padding(
@@ -102,7 +119,21 @@ class _InventoryScreenState extends State<InventoryScreen> {
                               '${Money.fmt(p.defaultPricePaise)} / ${p.unit}  •  default qty ${_qty(p.defaultQty)}',
                               style: const TextStyle(fontSize: 12.5, color: Ruby.muted),
                             ),
-                            trailing: p.trackStock == 1 ? _stockChip(p) : null,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (p.trackStock == 1) ...[
+                                  _stockChip(p),
+                                  const SizedBox(width: 4),
+                                ],
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline,
+                                      size: 20, color: Ruby.ruby),
+                                  tooltip: 'Delete product',
+                                  onPressed: () => _deleteProduct(p),
+                                ),
+                              ],
+                            ),
                             onTap: () => _openForm(product: p),
                           );
                         },
@@ -270,8 +301,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEdit ? 'Edit Product' : 'New Product'),
+      appBar: RubyAppBar(
+        title: _isEdit ? 'Edit Product' : 'New Product',
         actions: [
           if (_isEdit)
             IconButton(onPressed: _delete, icon: const Icon(Icons.delete_outline)),

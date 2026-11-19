@@ -203,8 +203,8 @@ class _LedgerScreenState extends State<LedgerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.customerName, overflow: TextOverflow.ellipsis),
+      appBar: RubyAppBar(
+        title: widget.customerName,
         actions: [
           IconButton(onPressed: _editCustomer, icon: const Icon(Icons.edit_outlined)),
         ],

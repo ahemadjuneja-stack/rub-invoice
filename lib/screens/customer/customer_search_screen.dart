@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/repo.dart';
+import '../../services/bill_draft_service.dart';
 import '../billing/billing_screen.dart';
 import '../../widgets/widgets.dart';
 import '../ledger/ledger_screen.dart';
@@ -25,17 +26,44 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   final _searchC = TextEditingController();
   List<Map<String, Object?>> _results = [];
   bool _searched = false;
+  BillDraft? _draft;
 
   @override
   void initState() {
     super.initState();
     _filter();
+    _loadDraft();
   }
 
   @override
   void dispose() {
     _searchC.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadDraft() async {
+    final d = await BillDraftService.instance.load();
+    if (!mounted) return;
+    setState(() => _draft = (d != null && d.lines.isNotEmpty) ? d : null);
+  }
+
+  /// Opens the saved draft straight in the billing screen, exactly
+  /// where the user left it.
+  Future<void> _resumeDraft() async {
+    final d = _draft;
+    if (d == null) return;
+    final cust = await Repo.instance.getCustomer(d.customerId);
+    if (!mounted) return;
+    if (cust == null) {
+      await BillDraftService.instance.clear();
+      await _loadDraft();
+      if (mounted) showSnack(context, 'Draft removed - customer no longer exists');
+      return;
+    }
+    await Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => BillingScreen(customer: cust)),
+    );
   }
 
   Future<void> _filter() async {
@@ -81,7 +109,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
   Widget build(BuildContext context) {
     final isBilling = widget.mode == CustomerSearchMode.pickForBilling;
     return Scaffold(
-      appBar: AppBar(title: Text(isBilling ? 'Select Customer' : 'Customers')),
+      appBar: RubyAppBar(title: isBilling ? 'Select Customer' : 'Customers'),
       body: Column(
         children: [
           Padding(
@@ -109,6 +137,11 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: _addNewTile(),
           ),
+          if (isBilling && _draft != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: _draftTile(_draft!),
+            ),
           Expanded(
             child: _results.isEmpty
                 ? (_searched
@@ -138,7 +171,11 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, color: Ruby.ink),
                         ),
                         subtitle: Text(
-                          [row['city'], row['phone']].where((e) => (e as String).isNotEmpty).join('  •  '),
+                          [
+                            row['shop_name'],
+                            row['city'],
+                            row['phone'],
+                          ].where((e) => (e as String?)?.isNotEmpty == true).join('  •  '),
                           style: const TextStyle(fontSize: 12.5, color: Ruby.muted),
                         ),
                         trailing: _balanceChip(balance),
@@ -179,6 +216,50 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                 ),
               ),
               const Icon(Icons.chevron_right, color: Ruby.ruby),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _draftTile(BillDraft d) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _resumeDraft,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Ruby.ruby, width: 1.2),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              const Icon(Icons.receipt_long, color: Ruby.ruby, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Resume unfinished bill',
+                      style: TextStyle(
+                          color: Ruby.ruby,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.5),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${d.customerName}  •  ${Money.fmt(d.totalPaise)}  •  tap to continue',
+                      style: const TextStyle(fontSize: 12, color: Ruby.muted),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward, color: Ruby.ruby, size: 20),
             ],
           ),
         ),

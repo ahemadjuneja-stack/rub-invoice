@@ -124,8 +124,8 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     return DefaultTabController(
       length: 3,
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Sales Reports'),
+        appBar: RubyAppBar(
+          title: 'Sales Reports',
           bottom: TabBar(
             controller: _tabs,
             indicatorColor: Colors.white,

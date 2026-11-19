@@ -13,15 +13,28 @@ class DB {
     final dir = await getDatabasesPath();
     _handle = await openDatabase(
       p.join(dir, 'ruby_invoice.db'),
-      version: 1,
+      version: 2,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // v2: customers gained shop_name + address.
+        if (oldVersion < 2) {
+          try {
+            await db.execute("ALTER TABLE customers ADD COLUMN shop_name TEXT DEFAULT ''");
+          } catch (_) {}
+          try {
+            await db.execute("ALTER TABLE customers ADD COLUMN address TEXT DEFAULT ''");
+          } catch (_) {}
+        }
+      },
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE customers (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
+            shop_name TEXT DEFAULT '',
             city TEXT DEFAULT '',
             phone TEXT DEFAULT '',
+            address TEXT DEFAULT '',
             opening_balance_paise INTEGER DEFAULT 0,
             created_at INTEGER DEFAULT 0,
             updated_at INTEGER DEFAULT 0,

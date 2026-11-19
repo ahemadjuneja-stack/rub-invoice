@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -5,6 +7,7 @@ import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../data/repo.dart';
+import '../../services/bill_draft_service.dart';
 import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
@@ -23,7 +26,7 @@ class BillingScreen extends StatefulWidget {
   State<BillingScreen> createState() => _BillingScreenState();
 }
 
-class _BillingScreenState extends State<BillingScreen> {
+class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserver {
   final _repo = Repo.instance;
 
   final TextEditingController _productC = TextEditingController();
@@ -38,6 +41,7 @@ class _BillingScreenState extends State<BillingScreen> {
   final List<CartLine> _cart = [];
   Product? _selected;
   bool _saving = false;
+  bool _restored = false;
   int _billNo = 0; // invoice number this bill will get (header display)
 
   /// Payment mode for THIS bill: 'udhar' (credit, nothing received now)
@@ -47,8 +51,10 @@ class _BillingScreenState extends State<BillingScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadCatalog();
     _loadHeader();
+    _restoreDraft();
   }
 
   Future<void> _loadHeader() async {
@@ -59,6 +65,10 @@ class _BillingScreenState extends State<BillingScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // Auto-save whatever is in the cart so nothing is ever lost
+    // (call, app switch, accidental back - the draft survives).
+    unawaited(_persistDraft());
     _productC.dispose();
     _qtyC.dispose();
     _rateC.dispose();
@@ -67,6 +77,52 @@ class _BillingScreenState extends State<BillingScreen> {
     _qtyF.dispose();
     _rateF.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden) {
+      _persistDraft();
+    }
+  }
+
+  // ---------------- draft (auto-save) ----------------
+
+  Future<void> _persistDraft() async {
+    if (_cart.isEmpty) {
+      await BillDraftService.instance.clear();
+      return;
+    }
+    await BillDraftService.instance.save(BillDraft(
+      customerId: widget.customer.id,
+      customerName: widget.customer.name,
+      lines: List.of(_cart),
+      payMode: _payMode,
+      paidNowPaise: _payMode == 'jama' ? Money.parsePaise(_paidC.text) : 0,
+      savedAt: DateTime.now().millisecondsSinceEpoch,
+    ));
+  }
+
+  Future<void> _restoreDraft() async {
+    final d = await BillDraftService.instance.load();
+    if (!mounted || d == null || _restored) return;
+    if (d.customerId != widget.customer.id || d.lines.isEmpty) return;
+    _restored = true;
+    setState(() {
+      _cart
+        ..clear()
+        ..addAll([
+          for (final l in d.lines)
+            CartLine(productId: l.productId, name: l.name, qty: l.qty, ratePaise: l.ratePaise),
+        ]);
+      _payMode = d.payMode == 'jama' ? 'jama' : 'udhar';
+      if (_payMode == 'jama' && d.paidNowPaise > 0) {
+        _paidC.text = Money.fmtRupeesInput(d.paidNowPaise);
+      }
+    });
+    showSnack(context, 'Draft restored - continue where you left');
   }
 
   Future<void> _loadCatalog() async {
@@ -114,24 +170,21 @@ class _BillingScreenState extends State<BillingScreen> {
     }
     final ratePaise = Money.parsePaise(_rateC.text);
     setState(() {
-      final idx = _cart.indexWhere(
-        (l) => l.name.toLowerCase() == name.toLowerCase() && l.ratePaise == ratePaise,
-      );
-      if (idx >= 0) {
-        _cart[idx].qty += qty;
-      } else {
-        _cart.add(CartLine(
-          productId: _selected?.id,
-          name: name,
-          qty: qty,
-          ratePaise: ratePaise,
-        ));
-      }
+      // ALWAYS a new numbered line - even for the same product. Every
+      // row stays fully independent (Miracle-style): editing row 2 can
+      // never touch row 3.
+      _cart.add(CartLine(
+        productId: _selected?.id,
+        name: name,
+        qty: qty,
+        ratePaise: ratePaise,
+      ));
       _selected = null;
       _productC.clear();
       _qtyC.clear();
       _rateC.clear();
     });
+    _persistDraft();
     _productF.requestFocus();
   }
 
@@ -176,6 +229,7 @@ class _BillingScreenState extends State<BillingScreen> {
         line.qty = double.tryParse(qtyC.text.replaceAll(',', '')) ?? line.qty;
         line.ratePaise = Money.parsePaise(rateC.text);
       });
+      _persistDraft();
     }
     qtyC.dispose();
     rateC.dispose();
@@ -207,6 +261,7 @@ class _BillingScreenState extends State<BillingScreen> {
         lines: _cart,
         paidNowPaise: paid,
       );
+      await BillDraftService.instance.clear(); // draft consumed
       SyncService.instance.syncSoon();
       if (!mounted) return;
       await _showSavedSheet(bill);
@@ -288,7 +343,9 @@ class _BillingScreenState extends State<BillingScreen> {
                   setState(() {
                     _cart.clear();
                     _paidC.clear();
+                    _payMode = 'udhar';
                   });
+                  _persistDraft();
                 },
               ),
               const SizedBox(height: 8),
@@ -311,26 +368,13 @@ class _BillingScreenState extends State<BillingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.customer.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800),
-            ),
-            Text(
-              [
-                'Invoice #${_billNo == 0 ? '...' : _billNo}',
-                if (widget.customer.city.isNotEmpty) widget.customer.city,
-                Dt.fmtDate(DateTime.now()),
-              ].join('  •  '),
-              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFFF3B7BC)),
-            ),
-          ],
-        ),
+      appBar: RubyAppBar(
+        title: widget.customer.name,
+        subtitle: [
+          'Invoice #${_billNo == 0 ? '...' : _billNo}',
+          if (widget.customer.city.isNotEmpty) widget.customer.city,
+          Dt.fmtDate(DateTime.now()),
+        ].join('  •  '),
       ),
       body: Column(
         children: [
@@ -508,7 +552,10 @@ class _BillingScreenState extends State<BillingScreen> {
               ),
               IconButton(
                 icon: const Icon(Icons.close, size: 18, color: Ruby.faint),
-                onPressed: () => setState(() => _cart.removeAt(i)),
+                onPressed: () {
+                  setState(() => _cart.removeAt(i));
+                  _persistDraft();
+                },
               ),
             ],
           ),
@@ -632,10 +679,12 @@ class _BillingScreenState extends State<BillingScreen> {
     final selected = _payMode == value;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () => setState(() {
+      onTap: () {
         _payMode = value;
         if (value == 'udhar') _paidC.clear();
-      }),
+        _persistDraft();
+        setState(() {});
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(

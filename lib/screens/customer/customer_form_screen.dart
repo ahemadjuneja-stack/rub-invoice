@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/formatters.dart';
+import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 
-/// Add or edit a customer: name, city, phone, opening balance.
+/// Add or edit a customer. Field order (Miracle-style):
+/// City -> Shop name -> Customer name -> Mobile -> Address line.
+/// The address line has a "+" that opens a big full-address editor.
 class CustomerFormScreen extends StatefulWidget {
   final String? customerId; // null = new
   final String prefillName;
@@ -23,10 +25,11 @@ class CustomerFormScreen extends StatefulWidget {
 }
 
 class _CustomerFormScreenState extends State<CustomerFormScreen> {
-  final _nameC = TextEditingController();
   final _cityC = TextEditingController();
+  final _shopC = TextEditingController();
+  final _nameC = TextEditingController();
   final _phoneC = TextEditingController();
-  final _openingC = TextEditingController();
+  final _addressC = TextEditingController();
 
   bool _isEdit = false;
   bool _saving = false;
@@ -45,20 +48,58 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     if (c == null || !mounted) return;
     setState(() {
       _isEdit = true;
-      _nameC.text = c.name;
       _cityC.text = c.city;
+      _shopC.text = c.shopName;
+      _nameC.text = c.name;
       _phoneC.text = c.phone;
-      _openingC.text = c.openingBalancePaise == 0 ? '' : Money.fmtRupeesInput(c.openingBalancePaise);
+      _addressC.text = c.address;
     });
   }
 
   @override
   void dispose() {
-    _nameC.dispose();
     _cityC.dispose();
+    _shopC.dispose();
+    _nameC.dispose();
     _phoneC.dispose();
-    _openingC.dispose();
+    _addressC.dispose();
     super.dispose();
+  }
+
+  /// Big full-address editor opened from the "+" on the address line.
+  Future<void> _openAddressEditor() async {
+    final c = TextEditingController(text: _addressC.text);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Full address',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        content: TextField(
+          controller: c,
+          minLines: 3,
+          maxLines: 6,
+          textCapitalization: TextCapitalization.sentences,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Shop / house no, street, area, landmark...',
+            isDense: false,
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Done')),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      setState(() => _addressC.text = c.text.trim());
+    }
+    c.dispose();
   }
 
   Future<void> _save() async {
@@ -69,13 +110,13 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     }
     setState(() => _saving = true);
     try {
-      final opening = Money.parsePaise(_openingC.text);
       if (widget.customerId == null) {
         await Repo.instance.newCustomer(
           name: name,
+          shopName: _shopC.text.trim(),
           city: _cityC.text.trim(),
           phone: _phoneC.text.trim(),
-          openingBalancePaise: opening,
+          address: _addressC.text.trim(),
         );
       } else {
         final c = await Repo.instance.getCustomer(widget.customerId!);
@@ -83,9 +124,10 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
           await Repo.instance.upsertCustomer(
             c.copyWith(
               name: name,
+              shopName: _shopC.text.trim(),
               city: _cityC.text.trim(),
               phone: _phoneC.text.trim(),
-              openingBalancePaise: opening,
+              address: _addressC.text.trim(),
             ),
           );
         }
@@ -97,25 +139,34 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     }
   }
 
+  InputDecoration _dec(String hint) => InputDecoration(hintText: hint, isDense: false);
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(_isEdit ? 'Edit Customer' : 'New Customer')),
+      appBar: RubyAppBar(title: _isEdit ? 'Edit Customer' : 'New Customer'),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           TextField(
-            controller: _nameC,
+            controller: _cityC,
             textCapitalization: TextCapitalization.words,
             autofocus: !_isEdit,
-            decoration: const InputDecoration(hintText: 'Customer name *', isDense: false),
+            decoration: _dec('City (e.g. Rajkot)'),
             style: const TextStyle(fontSize: 15),
           ),
           const SizedBox(height: 14),
           TextField(
-            controller: _cityC,
+            controller: _shopC,
             textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(hintText: 'City (e.g. Rajkot)', isDense: false),
+            decoration: _dec('Shop name'),
+            style: const TextStyle(fontSize: 15),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _nameC,
+            textCapitalization: TextCapitalization.words,
+            decoration: _dec('Customer name *'),
             style: const TextStyle(fontSize: 15),
           ),
           const SizedBox(height: 14),
@@ -123,18 +174,22 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
             controller: _phoneC,
             keyboardType: TextInputType.phone,
             inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d+]')), LengthLimitingTextInputFormatter(12)],
-            decoration: const InputDecoration(hintText: 'Phone (optional)', isDense: false),
+            decoration: _dec('Mobile number'),
             style: const TextStyle(fontSize: 15),
           ),
           const SizedBox(height: 14),
           TextField(
-            controller: _openingC,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*$'))],
-            decoration: const InputDecoration(
-              hintText: 'Old balance / udhar (optional)',
+            controller: _addressC,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: InputDecoration(
+              hintText: 'Address line',
               isDense: false,
-              helperText: 'Amount this customer already owed before using the app',
+              helperText: 'Tap + to write the full big address',
+              suffixIcon: IconButton(
+                onPressed: _openAddressEditor,
+                icon: const Icon(Icons.add_circle_outline, color: Ruby.ruby, size: 24),
+                tooltip: 'Write full address',
+              ),
             ),
             style: const TextStyle(fontSize: 15),
           ),

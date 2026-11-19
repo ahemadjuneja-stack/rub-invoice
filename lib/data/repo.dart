@@ -51,7 +51,7 @@ class Repo {
     final q = query.trim();
     final like = '%$q%';
     final rows = await db.rawQuery('''
-      SELECT c.id, c.name, c.city, c.phone, c.opening_balance_paise,
+      SELECT c.id, c.name, c.shop_name, c.city, c.phone, c.opening_balance_paise,
              IFNULL(bt.billed, 0) AS billed_paise,
              IFNULL(pt.paid, 0) AS paid_paise,
              c.opening_balance_paise + IFNULL(bt.billed, 0) - IFNULL(pt.paid, 0) AS balance_paise
@@ -85,16 +85,20 @@ class Repo {
 
   Future<Customer> newCustomer({
     required String name,
+    String shopName = '',
     String city = '',
     String phone = '',
+    String address = '',
     int openingBalancePaise = 0,
   }) async {
     final now = _now();
     final c = Customer(
       id: _uuid.v4(),
       name: name.trim(),
+      shopName: shopName.trim(),
       city: city.trim(),
       phone: phone.trim(),
+      address: address.trim(),
       openingBalancePaise: openingBalancePaise,
       createdAt: now,
       updatedAt: now,
