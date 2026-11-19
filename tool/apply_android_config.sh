@@ -19,11 +19,11 @@ if ! grep -q 'REQUEST_INSTALL_PACKAGES' "$MAIN"; then
   sed -i.bak 's#<application#    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n    <application#' "$MAIN"
 fi
 
-echo "- Raising minSdk to 23 (Firebase Auth requirement)..."
+echo "- Raising minSdk to 24 (plugin requirement)..."
 if [ -f android/app/build.gradle.kts ]; then
-  sed -i.bak 's/minSdk = .*/minSdk = 23/' android/app/build.gradle.kts
+  sed -i.bak 's/minSdk = .*/minSdk = 24/' android/app/build.gradle.kts
 elif [ -f android/app/build.gradle ]; then
-  sed -i.bak 's/minSdkVersion .*/minSdkVersion 23/' android/app/build.gradle
+  sed -i.bak 's/minSdkVersion .*/minSdkVersion 24/' android/app/build.gradle
 fi
 
 # Clean sed backup files
