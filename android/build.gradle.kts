@@ -39,22 +39,13 @@ fun Project.alignCompileSdkTo(minApi: Int) {
 subprojects {
     // :app is force-evaluated earlier via evaluationDependsOn above, so it is
     // already executed here; the rest register an afterEvaluate hook.
+    // (Never call afterEvaluate on an already-evaluated project - Gradle
+    // throws "Cannot run Project.afterEvaluate when the project is already
+    // evaluated" - hence the state.executed branch.)
     if (state.executed) {
         alignCompileSdkTo(36)
     } else {
         afterEvaluate { alignCompileSdkTo(36) }
-    }
-    // AGP 9: some vendor plugins (file_picker 8.x) register through
-    // com.android.internal.library; attach the alignment at plugin
-    // application time as well so the hook can never miss them.
-    listOf(
-        "com.android.library",
-        "com.android.internal.library",
-        "com.android.application",
-    ).forEach { pluginId ->
-        plugins.withId(pluginId) {
-            afterEvaluate { alignCompileSdkTo(36) }
-        }
     }
 }
 
