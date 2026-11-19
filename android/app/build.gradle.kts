@@ -29,10 +29,20 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        // Shared keystore (committed) so CI and local builds use the same
+        // signing key - required for stable Firebase phone auth fingerprints.
+        getByName("debug") {
+            storeFile = file("ruby-invoice.keystore")
+            storePassword = "rubyinvoice"
+            keyAlias = "ruby_invoice"
+            keyPassword = "rubyinvoice"
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Signs releases with the shared keystore above.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
