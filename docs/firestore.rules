@@ -56,5 +56,17 @@ service cloud.firestore {
       allow read, write: if request.auth != null
                          && request.auth.uid == shopId;
     }
+
+    // ------------------------------------------------------------------
+    // REMOTE FEATURE FLAGS (WhatsApp-style behaviour changes without an
+    // APK update). config/app holds `notice`, `min_version` and a
+    // `features` map - no private data, so every client may read it (even
+    // before sign-in). Only the Admin may edit it; the Firebase Console
+    // always bypasses these rules for the document editor.
+    // ------------------------------------------------------------------
+    match /config/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
   }
 }

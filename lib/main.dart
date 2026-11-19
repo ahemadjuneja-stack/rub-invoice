@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'app.dart';
 import 'data/db.dart';
 import 'firebase_options.dart';
+import 'services/remote_config.dart';
 import 'services/sync_service.dart';
 
 Future<void> main() async {
@@ -33,6 +34,11 @@ Future<void> main() async {
     }
   }
   await SyncService.instance.configure(fbReady: fbReady);
+
+  // Remote feature flags (config/app): notice banner, force-update gate
+  // and per-feature toggles - changeable from the Firebase Console
+  // without shipping an update (docs/REMOTE_CONTROL.md).
+  await RemoteConfigService.instance.init(fbReady: fbReady);
 
   runApp(const RubyInvoiceApp());
 }

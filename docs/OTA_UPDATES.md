@@ -18,11 +18,13 @@ git push origin main --tags
 # Actions builds the APK and attaches it to the v0.1.1 release
 ```
 
-**In-app updates:** the app's *Menu -> Check Updates* button calls
-`api.github.com/repos/ahemadjuneja-stack/rub-invoice/releases/latest`,
-compares the tag against the installed version and opens the release page
-to download the APK. The `REQUEST_INSTALL_PACKAGES` permission is already
-declared so Android offers "install from unknown sources" for your app.
+**In-app updates (background download + one-tap install):** the app checks
+`api.github.com/repos/ahemadjuneja-stack/rub-invoice/releases/latest`
+silently at most once every 6 hours and from *Menu -> Check Updates*. When
+a newer tag is found, the release APK downloads in the background (progress
+banner on the Billing tab); when done the user just taps **Install** -
+`open_filex` hands the file to the Android package installer
+(`REQUEST_INSTALL_PACKAGES` is already declared).
 
 > Note: this pipeline is for APK distribution outside the Play Store
 > (direct-to-customer, WhatsApp groups, website). The Play Store has its

@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../data/repo.dart';
 import '../../services/package_info_helper.dart';
+import '../../services/remote_config.dart';
 import '../../services/sync_service.dart';
 import '../../services/update_service.dart';
 import '../backup/backup_screen.dart';
@@ -31,17 +35,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Map<String, (int, int)> _totals = {};
   Map<String, String> _cities = {}; // customerId -> city (bill tiles)
   bool _loading = true;
+  bool _gating = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    RemoteConfigService.instance.config.addListener(_onRemoteConfig);
     _reload();
+    unawaited(_autoUpdateCheck());
+    unawaited(_gateIfNeeded());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    RemoteConfigService.instance.config.removeListener(_onRemoteConfig);
     super.dispose();
   }
 
@@ -85,37 +94,160 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _checkUpdate() async {
     try {
-      final (has, tag, url) = await UpdateService.instance.check();
+      if (UpdateService.instance.readyPath.value != null) {
+        await _showUpdateDialog(tag: UpdateService.instance.latestTag ?? '');
+        return;
+      }
+      final (has, tag) = await UpdateService.instance.check();
       if (!mounted) return;
       if (has) {
-        await showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Text('Update available: $tag', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-            content: const Text(
-              'A newer version of Ruby Invoice has been published. '
-              'Open the release page to download and install the APK.',
-              style: TextStyle(fontSize: 13.5, height: 1.45, color: Ruby.muted),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Later')),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  UpdateService.instance.openRelease(url);
-                },
-                child: const Text('Open release'),
-              ),
-            ],
-          ),
-        );
+        await _showUpdateDialog(tag: tag);
       } else {
         showSnack(context, 'You are on the latest version');
       }
     } catch (e) {
       if (mounted) showSnack(context, 'Could not check updates (offline?)', error: true);
     }
+  }
+
+  /// Silent update check (max once per 6 hours). If a newer release is
+  /// out, its APK starts downloading in the background right away - the
+  /// user later just taps "Install".
+  Future<void> _autoUpdateCheck() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final last = sp.getInt('last_update_check') ?? 0;
+      if (now - last < 6 * 3600 * 1000) return;
+      await sp.setInt('last_update_check', now);
+      final (has, _) = await UpdateService.instance.check();
+      if (has) unawaited(UpdateService.instance.downloadApk());
+    } catch (_) {
+      // auto check must never disturb the user
+    }
+  }
+
+  void _onRemoteConfig() => unawaited(_gateIfNeeded());
+
+  /// Force-update gate driven by remote config `min_version`.
+  Future<void> _gateIfNeeded() async {
+    final min = RemoteConfigService.instance.config.value.minVersion;
+    if (min.isEmpty || _gating) return;
+    try {
+      if (!await UpdateService.instance.updateRequired(min)) return;
+    } catch (_) {
+      return;
+    }
+    _gating = true;
+    try {
+      // Resolve the release and start the background download before the
+      // gate dialog appears.
+      await UpdateService.instance.check();
+      unawaited(UpdateService.instance.downloadApk());
+      if (!mounted) return;
+      await _showUpdateDialog(tag: min, force: true);
+    } catch (_) {
+      // offline - the gate will retry on next open
+    } finally {
+      _gating = false;
+    }
+  }
+
+  /// Download-progress dialog that turns into an Install button when the
+  /// APK has landed. With force=true it cannot be dismissed.
+  Future<void> _showUpdateDialog({required String tag, bool force = false}) {
+    unawaited(UpdateService.instance.downloadApk());
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: !force,
+      builder: (ctx) => PopScope(
+        canPop: !force,
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(
+            force ? 'Update required (v$tag)' : 'Update available: v$tag',
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          ),
+          content: ValueListenableBuilder<String?>(
+            valueListenable: UpdateService.instance.readyPath,
+            builder: (context, path, _) {
+              if (path != null) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.check_circle_outline, color: Colors.green, size: 34),
+                    const SizedBox(height: 12),
+                    Text(
+                      'v$tag downloaded and ready to install.',
+                      style: const TextStyle(fontSize: 13.5, color: Ruby.muted),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () => UpdateService.instance.install(),
+                        icon: const Icon(Icons.install_mobile, size: 20),
+                        label: const Text('Install now'),
+                      ),
+                    ),
+                  ],
+                );
+              }
+              return ValueListenableBuilder<bool>(
+                valueListenable: UpdateService.instance.downloading,
+                builder: (context, busy, _) => ValueListenableBuilder<double>(
+                  valueListenable: UpdateService.instance.downloadProgress,
+                  builder: (context, p, _) {
+                    final failed = !busy && p == 0 && UpdateService.instance.lastError != null;
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          force
+                              ? 'A newer version is required. Downloading in background…'
+                              : 'Downloading in background…',
+                          style: const TextStyle(fontSize: 13.5, height: 1.45, color: Ruby.muted),
+                        ),
+                        const SizedBox(height: 14),
+                        LinearProgressIndicator(
+                          value: busy ? (p > 0 ? p : null) : 0.0,
+                          minHeight: 6,
+                          color: Ruby.ruby,
+                          backgroundColor: Ruby.rubyLight,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          busy && p > 0
+                              ? '${(p * 100).toStringAsFixed(0)}% downloaded'
+                              : (failed ? 'Download failed (offline?)' : 'Starting download…'),
+                          style: const TextStyle(fontSize: 12, color: Ruby.faint),
+                        ),
+                        if (failed) ...[
+                          const SizedBox(height: 14),
+                          OutlinedButton(
+                            onPressed: () {
+                              UpdateService.instance.lastError = null;
+                              unawaited(UpdateService.instance.downloadApk());
+                            },
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ],
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+          actions: [
+            if (!force)
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Later')),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _about() async {
@@ -145,7 +277,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         title: Text(_tab == 0 ? 'Recent Bills' : 'Menu'),
         actions: const [SyncChip()],
       ),
-      body: _tab == 0 ? _billingTab() : _menuTab(),
+      body: ValueListenableBuilder<RemoteConfig>(
+        valueListenable: RemoteConfigService.instance.config,
+        builder: (context, rc, _) => _tab == 0 ? _billingTab(rc) : _menuTab(rc),
+      ),
       floatingActionButton: _tab == 0
           ? FloatingActionButton(
               heroTag: 'home_fab',
@@ -166,7 +301,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // ---------------- Billing tab ----------------
 
-  Widget _billingTab() {
+  Widget _billingTab(RemoteConfig rc) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator(color: Ruby.ruby));
     }
@@ -181,6 +316,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
+          _noticeBanner(rc),
+          _updateBanner(),
           _summaryCard(tToday, tYesterday),
           for (final key in [today, yesterday]) ...[
             SectionHeader(Dt.labelFor(key)),
@@ -264,9 +401,96 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  // ---------------- Banners ----------------
+
+  Widget _noticeBanner(RemoteConfig rc) {
+    if (rc.notice.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7E0),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE8D48B)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.campaign_outlined, size: 20, color: Color(0xFFB8860B)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              rc.notice,
+              style: const TextStyle(fontSize: 13, height: 1.4, color: Color(0xFF7A5C00)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shows download progress / install tap-target while an OTA download
+  /// is running in the background.
+  Widget _updateBanner() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: UpdateService.instance.downloading,
+      builder: (context, busy, _) => ValueListenableBuilder<String?>(
+        valueListenable: UpdateService.instance.readyPath,
+        builder: (context, path, _) {
+          if (!busy && path == null) return const SizedBox.shrink();
+          return Container(
+            margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Ruby.rubyLight,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Ruby.ruby.withValues(alpha: 0.35)),
+            ),
+            child: path != null
+                ? InkWell(
+                    onTap: () => UpdateService.instance.install(),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.install_mobile, size: 20, color: Ruby.ruby),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'New version ready - tap to install',
+                            style: const TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w700, color: Ruby.ink),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : Row(
+                    children: [
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Ruby.ruby),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ValueListenableBuilder<double>(
+                          valueListenable: UpdateService.instance.downloadProgress,
+                          builder: (context, p, _) => Text(
+                            'Downloading update…${p > 0 ? ' ${(p * 100).toStringAsFixed(0)}%' : ''}',
+                            style: const TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w700, color: Ruby.ink),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          );
+        },
+      ),
+    );
+  }
+
   // ---------------- Menu tab ----------------
 
-  Widget _menuTab() {
+  Widget _menuTab(RemoteConfig rc) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -278,18 +502,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           crossAxisSpacing: 12,
           childAspectRatio: 1.5,
           children: [
-            _menuCard(Icons.inventory_2_outlined, 'Inventory (Item Master)', () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const InventoryScreen()));
-            }),
-            _menuCard(Icons.book_outlined, 'Customer Ledger (Jama / Udhar)', () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)),
-              );
-            }),
-            _menuCard(Icons.ssid_chart, 'Sales Reports', () {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportsScreen()));
-            }),
+            if (rc.feature('inventory'))
+              _menuCard(Icons.inventory_2_outlined, 'Inventory (Item Master)', () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const InventoryScreen()));
+              }),
+            if (rc.feature('ledger'))
+              _menuCard(Icons.book_outlined, 'Customer Ledger (Jama / Udhar)', () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)),
+                );
+              }),
+            if (rc.feature('reports'))
+              _menuCard(Icons.ssid_chart, 'Sales Reports', () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportsScreen()));
+              }),
             _menuCard(Icons.picture_as_pdf_outlined, 'Bill Format & PDF / Share', () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
             }),
@@ -315,16 +542,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           child: Column(
             children: [
-              ListTile(
-                dense: true,
-                leading: const Icon(Icons.backup_outlined, color: Ruby.ruby, size: 20),
-                title: const Text('Backup & Restore', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-                trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
-                onTap: () {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()));
-                },
-              ),
-              const Divider(height: 1, indent: 16, endIndent: 16),
+              if (rc.feature('backup')) ...[
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.backup_outlined, color: Ruby.ruby, size: 20),
+                  title: const Text('Backup & Restore', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                  trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
+                  onTap: () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()));
+                  },
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+              ],
               ListTile(
                 dense: true,
                 leading: const Icon(Icons.system_update_outlined, color: Ruby.ruby, size: 20),
