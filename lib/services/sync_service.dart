@@ -119,6 +119,7 @@ class SyncService {
     await _pushFlat(db, 'products');
     await _pushFlat(db, 'payments');
     await _pushFlat(db, 'purchases');
+    await _pushFlat(db, 'bill_dispatch');
     await _pushBills(db);
   }
 
@@ -162,7 +163,7 @@ class SyncService {
   Future<void> _pullAll(Database db) async {
     final last = int.tryParse(await Repo.instance.getMeta('last_sync_ms') ?? '') ?? 0;
     var cursor = last;
-    for (final table in ['customers', 'products', 'payments', 'purchases']) {
+    for (final table in ['customers', 'products', 'payments', 'purchases', 'bill_dispatch']) {
       cursor = await _pullFlat(db, table, cursor);
     }
     cursor = await _pullBills(db, cursor);

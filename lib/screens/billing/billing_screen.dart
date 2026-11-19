@@ -8,9 +8,9 @@ import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../data/repo.dart';
 import '../../services/bill_draft_service.dart';
-import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
+import '../bills/dispatch_sheet.dart';
 
 /// Smart billing screen (Miracle-style):
 ///  - 3-slim-column entry row: [ Product name | Qty | Price ]
@@ -352,15 +352,26 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
       SyncService.instance.syncSoon();
       if (!mounted) return;
       await _showSavedSheet(bill, edited: _isEdit);
+      if (!mounted) return;
+      // The "Done" display: delivery (billty) details of this bill -
+      // how the goods went, billty photo, transport note (all shareable
+      // to WhatsApp from the bill view any time).
+      await showDispatchSheet(context, bill: bill);
+      if (!mounted) return;
+      if (_isEdit) {
+        Navigator.of(context).pop(); // back to the bill view
+      } else {
+        Navigator.of(context).popUntil((r) => r.isFirst);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
+  /// After save: a plain confirmation with a single "Done" option. The
+  /// PDF keeps its share button on the bill view; tapping Done here
+  /// opens the delivery (billty) details display for this bill.
   Future<void> _showSavedSheet(Bill bill, {bool edited = false}) async {
-    final (full, items) = await _repo.billWithItems(bill.id);
-    final shop = await _repo.shopProfile();
-    final cust = await _repo.getCustomer(widget.customer.id);
     final (_, entries) = await _repo.ledger(widget.customer.id);
     final balance = entries.isEmpty ? 0 : entries.last.runningBalancePaise;
     if (!mounted) return;
@@ -393,7 +404,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Ruby.ink),
                         ),
                         Text(
-                          '${widget.customer.name}  •  ${Money.fmt(full.totalPaise)}'
+                          '${widget.customer.name}  •  ${Money.fmt(bill.totalPaise)}'
                           '  •  ${balance > 0 ? 'Due ${Money.fmt(balance)}' : balance < 0 ? 'Advance ${Money.fmt(-balance)}' : 'Settled'}',
                           style: const TextStyle(fontSize: 12.5, color: Ruby.muted),
                         ),
@@ -403,55 +414,13 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                 ],
               ),
               const SizedBox(height: 18),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.share, size: 20),
-                label: const Text('SHARE PDF BILL'),
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  await PdfService.instance.shareBill(
-                    bill: full,
-                    items: items,
-                    shop: shop,
-                    customerCity: cust?.city ?? '',
-                    customerPhone: cust?.phone ?? '',
-                    balanceAfterPaise: balance,
-                  );
-                  if (mounted) {
-                    if (edited) {
-                      Navigator.of(context).pop(); // back to the bill view
-                    } else {
-                      Navigator.of(context).popUntil((r) => r.isFirst);
-                    }
-                  }
-                },
-              ),
-              const SizedBox(height: 8),
-              if (!edited)
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.post_add, size: 20),
-                  label: const Text('NEW BILL (SAME CUSTOMER)'),
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    setState(() {
-                      _cart.clear();
-                      _paidC.clear();
-                      _payMode = 'udhar';
-                      _billDate = Dt.todayStart();
-                    });
-                    _persistDraft();
-                  },
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text(
+                  'DONE',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 1),
                 ),
-              if (!edited) const SizedBox(height: 8),
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  if (edited) {
-                    Navigator.of(context).pop(); // back to the bill view
-                  } else {
-                    Navigator.of(context).popUntil((r) => r.isFirst);
-                  }
-                },
-                child: const Text('Done'),
               ),
             ],
           ),

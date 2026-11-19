@@ -457,3 +457,73 @@ class Purchase {
 
   static Purchase fromSync(Map<String, Object?> m) => Purchase.fromMap({...m, 'dirty': 0});
 }
+
+/// Delivery (transport) details of one saved bill: how the goods went to
+/// the customer, the billty (lorry receipt) photo - kept 45 days, then
+/// auto-deleted - and a free-text transport note. One row per bill.
+class BillDispatch {
+  final String id;
+  final String billId;
+  final String mode; // '' | transport | inhand | courier | pending
+  final String billtyPath; // local billty photo, deletes itself after 45 days
+  final int billtyAt; // epoch ms the photo was captured (retention clock)
+  final String note;
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  BillDispatch({
+    required this.id,
+    required this.billId,
+    this.mode = '',
+    this.billtyPath = '',
+    this.billtyAt = 0,
+    this.note = '',
+    required this.createdAt,
+    required this.updatedAt,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  static const allModes = ['transport', 'inhand', 'courier', 'pending'];
+
+  factory BillDispatch.fromMap(Map<String, Object?> m) => BillDispatch(
+        id: m['id'] as String,
+        billId: m['bill_id'] as String,
+        mode: (m['mode'] ?? '') as String,
+        billtyPath: (m['billty_path'] ?? '') as String,
+        billtyAt: (m['billty_at'] ?? 0) as int,
+        note: (m['note'] ?? '') as String,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'bill_id': billId,
+        'mode': mode,
+        'billty_path': billtyPath,
+        'billty_at': billtyAt,
+        'note': note,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
+
+  static BillDispatch fromSync(Map<String, Object?> m) => BillDispatch.fromMap({...m, 'dirty': 0});
+
+  /// Short label shown wherever the bill opens.
+  String get modeLabel {
+    if (mode == 'transport') return 'Transport';
+    if (mode == 'inhand') return 'In Hand';
+    if (mode == 'courier') return 'Courier';
+    if (mode == 'pending') return 'Transport Pending';
+    return 'Not set';
+  }
+}

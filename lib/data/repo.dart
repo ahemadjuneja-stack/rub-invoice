@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
@@ -617,6 +619,109 @@ class Repo {
       await txn.rawUpdate('UPDATE payments SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE bill_id = ?', [now, billId]);
       await txn.rawUpdate('UPDATE bills SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', [now, billId]);
     });
+  }
+
+  // ---------------- delivery (billty) details ----------------
+
+  /// How long a billty (lorry receipt) photo stays on the phone before
+  /// it deletes itself. 45 days, Miracle-style proof retention.
+  static const billtyRetentionDays = 45;
+
+  /// The delivery details saved for one bill (null when none yet).
+  Future<BillDispatch?> dispatchFor(String billId) async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+      'SELECT * FROM bill_dispatch WHERE bill_id = ? AND is_deleted = 0 LIMIT 1',
+      [billId],
+    );
+    if (rows.isEmpty) return null;
+    return BillDispatch.fromMap(rows.first);
+  }
+
+  /// Saves (insert or update) the delivery details of one bill.
+  /// [billtyPath] is the EFFECTIVE photo path: '' clears a photo, the
+  /// same old path keeps it untouched, a new path replaces it (the old
+  /// file is deleted from disk). The 45-day retention clock restarts
+  /// whenever a new photo is saved.
+  Future<BillDispatch> saveDispatch({
+    required String billId,
+    required String mode,
+    String note = '',
+    String billtyPath = '',
+  }) async {
+    final db = await _db;
+    final now = _now();
+    final rows = await db.rawQuery(
+      'SELECT * FROM bill_dispatch WHERE bill_id = ? AND is_deleted = 0 LIMIT 1',
+      [billId],
+    );
+    if (rows.isNotEmpty) {
+      final old = BillDispatch.fromMap(rows.first);
+      if (old.billtyPath != billtyPath) _deletePhotoFile(old.billtyPath);
+      final d = BillDispatch(
+        id: old.id,
+        billId: billId,
+        mode: mode,
+        billtyPath: billtyPath,
+        billtyAt: billtyPath.isEmpty
+            ? 0
+            : (old.billtyPath == billtyPath ? old.billtyAt : now),
+        note: note,
+        createdAt: old.createdAt,
+        updatedAt: now,
+        isDeleted: 0,
+        dirty: 1,
+      );
+      await db.update('bill_dispatch', d.toMap(), where: 'id = ?', whereArgs: [old.id]);
+      return d;
+    }
+    final d = BillDispatch(
+      id: _uuid.v4(),
+      billId: billId,
+      mode: mode,
+      billtyPath: billtyPath,
+      billtyAt: billtyPath.isEmpty ? 0 : now,
+      note: note,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await db.insert('bill_dispatch', d.toMap());
+    return d;
+  }
+
+  /// Deletes every billty photo older than 45 days from disk and clears
+  /// its path (the mode + note stay as the bill's history). Called once
+  /// per app start - fire-and-forget, boot never waits on it.
+  Future<int> cleanExpiredBillties() async {
+    final db = await _db;
+    final cutoff = DateTime.now().millisecondsSinceEpoch - billtyRetentionDays * 86400000;
+    final rows = await db.rawQuery(
+      "SELECT id, billty_path FROM bill_dispatch WHERE is_deleted = 0 "
+      "AND billty_path != '' AND billty_at > 0 AND billty_at < ?",
+      [cutoff],
+    );
+    var n = 0;
+    for (final r in rows) {
+      _deletePhotoFile((r['billty_path'] ?? '') as String);
+      await db.update(
+        'bill_dispatch',
+        {'billty_path': '', 'billty_at': 0, 'updated_at': _now(), 'dirty': 1},
+        where: 'id = ?',
+        whereArgs: [r['id'] as String],
+      );
+      n++;
+    }
+    return n;
+  }
+
+  /// Deletes a billty photo from disk (45-day cleanup or replacement).
+  /// Only files inside the app's own billty_photos folder are touched.
+  void _deletePhotoFile(String path) {
+    if (path.isEmpty || !path.contains('billty_photos')) return;
+    try {
+      final f = File(path);
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
   }
 
   // ---------------- payments ----------------

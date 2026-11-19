@@ -13,7 +13,7 @@ class DB {
     final dir = await getDatabasesPath();
     _handle = await openDatabase(
       p.join(dir, 'ruby_invoice.db'),
-      version: 4,
+      version: 5,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onUpgrade: (db, oldVersion, newVersion) async {
         // v2: customers gained shop_name + address.
@@ -35,6 +35,11 @@ class DB {
           try {
             await db.execute("ALTER TABLE payments ADD COLUMN proof_path TEXT DEFAULT ''");
           } catch (_) {}
+        }
+        // v5: delivery (transport) details per bill - how the goods went,
+        // the billty photo (45-day retention, auto-deleted) and a note.
+        if (oldVersion < 5) {
+          await _createDispatch(db);
         }
       },
       onCreate: (db, version) async {
@@ -123,6 +128,8 @@ class DB {
 
         await _createPurchases(db);
 
+        await _createDispatch(db);
+
         await db.execute('CREATE INDEX idx_bills_day ON bills (bill_day)');
         await db.execute('CREATE INDEX idx_bills_customer ON bills (customer_id)');
         await db.execute('CREATE INDEX idx_items_bill ON bill_items (bill_id)');
@@ -157,6 +164,30 @@ class DB {
     ''');
     try {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_purchases_day ON purchases (purchase_day)');
+    } catch (_) {}
+  }
+
+  /// v5: bill_dispatch table - one row per bill with the delivery mode
+  /// (transport / in hand / courier / pending), the billty photo path
+  /// and its capture time (45-day auto-delete clock) plus a note.
+  /// Same sync-ready shape as every other table.
+  static Future<void> _createDispatch(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS bill_dispatch (
+        id TEXT PRIMARY KEY,
+        bill_id TEXT NOT NULL,
+        mode TEXT DEFAULT '',
+        billty_path TEXT DEFAULT '',
+        billty_at INTEGER DEFAULT 0,
+        note TEXT DEFAULT '',
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    try {
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_dispatch_bill ON bill_dispatch (bill_id)');
     } catch (_) {}
   }
 }

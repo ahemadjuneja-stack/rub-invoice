@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../core/formatters.dart';
@@ -8,6 +10,7 @@ import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 import '../billing/billing_screen.dart';
+import 'dispatch_sheet.dart';
 
 /// Bill detail: items, totals, share PDF, edit (pen), delete.
 class BillViewScreen extends StatefulWidget {
@@ -26,6 +29,7 @@ class _BillViewScreenState extends State<BillViewScreen> {
   String _city = '';
   String _phone = '';
   int _balanceAfter = 0;
+  BillDispatch? _dispatch;
   bool _loading = true;
 
   @override
@@ -40,6 +44,7 @@ class _BillViewScreenState extends State<BillViewScreen> {
     final shop = await repo.shopProfile();
     final cust = await repo.getCustomer(bill.customerId);
     final (_, entries) = await repo.ledger(bill.customerId);
+    final d = await repo.dispatchFor(widget.billId);
     if (!mounted) return;
     setState(() {
       _bill = bill;
@@ -49,6 +54,7 @@ class _BillViewScreenState extends State<BillViewScreen> {
       _city = cust?.city ?? '';
       _phone = cust?.phone ?? '';
       _balanceAfter = entries.isEmpty ? 0 : entries.last.runningBalancePaise;
+      _dispatch = d;
       _loading = false;
     });
   }
@@ -202,6 +208,7 @@ class _BillViewScreenState extends State<BillViewScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Text('Note: ${bill!.note}', style: const TextStyle(fontSize: 12.5, color: Ruby.muted)),
                   ),
+                _dispatchCard(),
                 const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.all(16),
@@ -227,6 +234,158 @@ class _BillViewScreenState extends State<BillViewScreen> {
         ),
       ),
     );
+  }
+
+  /// Delivery (transport) details saved at bill time: the mode, the
+  /// transport note and the billty photo (45-day retention). Tap ADD /
+  /// the pen to open the delivery sheet; share button sends everything
+  /// (photo included) to WhatsApp.
+  Widget _dispatchCard() {
+    final bill = _bill;
+    if (bill == null) return const SizedBox.shrink();
+    final d = _dispatch;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Ruby.line),
+      ),
+      child: d == null
+          ? InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: _openDispatch,
+              child: Row(
+                children: [
+                  const Icon(Icons.local_shipping_outlined, size: 20, color: Ruby.faint),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Delivery details not added yet',
+                      style: TextStyle(fontSize: 13, color: Ruby.muted),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: Ruby.ruby,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'ADD',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(_modeIcon(d.mode), size: 18, color: Ruby.ruby),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Delivery: ${d.modeLabel}',
+                        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Ruby.ink),
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Edit delivery details',
+                      onPressed: _openDispatch,
+                      icon: const Icon(Icons.edit_outlined, size: 18, color: Ruby.muted),
+                    ),
+                  ],
+                ),
+                if (d.note.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      d.note,
+                      style: const TextStyle(fontSize: 12.5, color: Ruby.muted, height: 1.4),
+                    ),
+                  ),
+                if (d.billtyPath.isNotEmpty && File(d.billtyPath).existsSync()) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      GestureDetector(
+                        onTap: () => showPhotoFullscreen(context, d.billtyPath),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(
+                            File(d.billtyPath),
+                            width: 72,
+                            height: 72,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 72,
+                              height: 72,
+                              color: Ruby.fieldBg,
+                              child: const Icon(Icons.broken_image_outlined, size: 20, color: Ruby.faint),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'BILLTY PHOTO',
+                              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 1, color: Ruby.muted),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Tap to view - ${billtyDaysLeft(d)}',
+                              style: const TextStyle(fontSize: 11.5, color: Ruby.faint),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.chat_outlined, size: 18),
+                  label: const Text(
+                    'SHARE ON WHATSAPP',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+                  ),
+                  onPressed: () => shareDispatchDetails(bill, d, title: _customerTitle),
+                ),
+              ],
+            ),
+    );
+  }
+
+  /// Opens the delivery sheet (same display as right after Done); the
+  /// card reloads when it closes so saved details appear instantly.
+  Future<void> _openDispatch() async {
+    final bill = _bill;
+    if (bill == null) return;
+    await showDispatchSheet(context, bill: bill);
+    if (mounted) _load();
+  }
+
+  IconData _modeIcon(String mode) {
+    if (mode == 'transport') return Icons.local_shipping_outlined;
+    if (mode == 'inhand') return Icons.directions_walk_outlined;
+    if (mode == 'courier') return Icons.markunread_mailbox_outlined;
+    if (mode == 'pending') return Icons.schedule_outlined;
+    return Icons.help_outline;
   }
 
   String _qty(double qty) {

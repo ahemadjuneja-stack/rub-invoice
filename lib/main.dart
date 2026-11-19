@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -5,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'app.dart';
 import 'data/db.dart';
+import 'data/repo.dart';
 import 'firebase_options.dart';
 import 'services/remote_config.dart';
 import 'services/sync_service.dart';
@@ -15,6 +18,10 @@ Future<void> main() async {
 
   // Open the local database first - the app must boot fully offline.
   await DB.open();
+
+  // Billty (lorry receipt) photos expire after 45 days: expired files
+  // delete themselves quietly at every app start, boot never waits.
+  unawaited(Repo.instance.cleanExpiredBillties());
 
   // Firebase is optional on first run. After docs/FIREBASE_SETUP.md is
   // completed, sync + OTP turn on automatically.
