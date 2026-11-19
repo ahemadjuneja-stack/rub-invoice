@@ -290,6 +290,7 @@ class Payment {
   final String payDay; // local day key
   final String mode; // cash | upi | bank | other
   final String note;
+  final String proofPath; // optional payment screenshot (UPI etc.) kept on this phone
   final int createdAt;
   final int updatedAt;
   final int isDeleted;
@@ -304,6 +305,7 @@ class Payment {
     required this.payDay,
     this.mode = 'cash',
     this.note = '',
+    this.proofPath = '',
     required this.createdAt,
     required this.updatedAt,
     this.isDeleted = 0,
@@ -319,6 +321,7 @@ class Payment {
         payDay: (m['pay_day'] ?? '') as String,
         mode: (m['mode'] ?? 'cash') as String,
         note: (m['note'] ?? '') as String,
+        proofPath: (m['proof_path'] ?? '') as String,
         createdAt: (m['created_at'] ?? 0) as int,
         updatedAt: (m['updated_at'] ?? 0) as int,
         isDeleted: (m['is_deleted'] ?? 0) as int,
@@ -334,6 +337,7 @@ class Payment {
         'pay_day': payDay,
         'mode': mode,
         'note': note,
+        'proof_path': proofPath,
         'created_at': createdAt,
         'updated_at': updatedAt,
         'is_deleted': isDeleted,
@@ -354,6 +358,7 @@ class LedgerEntry {
   final int debitPaise; // bills increase what customer owes
   final int creditPaise; // payments reduce it
   final int runningBalancePaise;
+  final String proofPath; // payment screenshot on this phone (payments only)
 
   LedgerEntry({
     required this.kind,
@@ -363,6 +368,7 @@ class LedgerEntry {
     required this.debitPaise,
     required this.creditPaise,
     required this.runningBalancePaise,
+    this.proofPath = '',
   });
 }
 

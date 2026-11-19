@@ -84,6 +84,9 @@ ThemeData buildRubyTheme() {
       style: TextButton.styleFrom(foregroundColor: Ruby.ruby),
     ),
     dividerTheme: const DividerThemeData(color: Ruby.line, thickness: 1, space: 1),
+    // Selected chips (CASH / UPI / BANK / OTHER ...) have a ruby background,
+    // so their tick mark must be white to stay visible.
+    chipTheme: const ChipThemeData(checkmarkColor: Colors.white),
     bottomNavigationBarTheme: const BottomNavigationBarThemeData(
       backgroundColor: Colors.white,
       selectedItemColor: Ruby.ruby,

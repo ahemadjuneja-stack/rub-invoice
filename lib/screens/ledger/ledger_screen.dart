@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
@@ -87,6 +91,8 @@ class _LedgerScreenState extends State<LedgerScreen> {
     String mode = 'cash';
     DateTime date = DateTime.now();
     final noteC = TextEditingController();
+    String? proofTmp; // picked UPI screenshot - copied into app storage on save
+    final picker = ImagePicker();
 
     final saved = await showModalBottomSheet<bool>(
       context: context,
@@ -96,7 +102,9 @@ class _LedgerScreenState extends State<LedgerScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => Padding(
+        // Scrollable so the sheet never overflows on small screens when
+        // the keyboard + screenshot preview are both showing.
+        builder: (ctx, setSheet) => SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
             20, 20, 20,
             20 + MediaQuery.of(ctx).viewInsets.bottom,
@@ -145,6 +153,69 @@ class _LedgerScreenState extends State<LedgerScreen> {
                 ],
               ),
               const SizedBox(height: 12),
+              // UPI payments: optional proof screenshot from the gallery.
+              // The photo stays on this phone with the payment record.
+              if (mode == 'upi') ...[
+                if (proofTmp == null)
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(minimumSize: const Size(120, 44)),
+                    icon: const Icon(Icons.photo_outlined, size: 20),
+                    label: const Text(
+                      'Attach UPI screenshot (optional)',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                    onPressed: () async {
+                      try {
+                        final x = await picker.pickImage(
+                          source: ImageSource.gallery,
+                          imageQuality: 72,
+                          maxWidth: 1600,
+                        );
+                        if (x != null) setSheet(() => proofTmp = x.path);
+                      } catch (_) {
+                        if (ctx.mounted) showSnack(ctx, 'Could not open the gallery', error: true);
+                      }
+                    },
+                  )
+                else
+                  Row(
+                    children: [
+                      GestureDetector(
+                        onTap: () => _showPhotoFull(proofTmp!),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(
+                            File(proofTmp!),
+                            width: 52,
+                            height: 52,
+                            fit: BoxFit.cover,
+                            filterQuality: FilterQuality.medium,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 52,
+                              height: 52,
+                              color: Ruby.fieldBg,
+                              child: const Icon(Icons.broken_image_outlined, size: 20, color: Ruby.muted),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Screenshot attached',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Ruby.ink),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Remove screenshot',
+                        icon: const Icon(Icons.delete_outline, size: 20, color: Ruby.ruby),
+                        onPressed: () => setSheet(() => proofTmp = null),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 4),
+              ],
+              const SizedBox(height: 12),
               Row(
                 children: [
                   const Icon(Icons.calendar_month_outlined, size: 18, color: Ruby.muted),
@@ -178,12 +249,17 @@ class _LedgerScreenState extends State<LedgerScreen> {
                     showSnack(ctx, 'Enter an amount', error: true);
                     return;
                   }
+                  String proof = '';
+                  if (proofTmp != null) {
+                    proof = await _persistProof(proofTmp!) ?? '';
+                  }
                   await Repo.instance.addPayment(
                     customerId: widget.customerId,
                     amountPaise: amount,
                     mode: mode,
                     date: date,
                     note: noteC.text.trim(),
+                    proofPath: proof,
                   );
                   SyncService.instance.syncSoon();
                   if (ctx.mounted) Navigator.pop(ctx, true);
@@ -198,6 +274,50 @@ class _LedgerScreenState extends State<LedgerScreen> {
     amountC.dispose();
     noteC.dispose();
     return saved;
+  }
+
+  /// Copies the picked screenshot into the app's documents folder so it
+  /// survives gallery cleanups, then returns the new path.
+  Future<String?> _persistProof(String tmpPath) async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory('${docs.path}${Platform.pathSeparator}payment_proofs');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final f =
+          File('${dir.path}${Platform.pathSeparator}${DateTime.now().microsecondsSinceEpoch}.jpg');
+      await File(tmpPath).copy(f.path);
+      return f.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Full-screen, zoomable viewer for a payment proof screenshot.
+  void _showPhotoFull(String path) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                maxScale: 4,
+                child: Image.file(File(path), filterQuality: FilterQuality.medium),
+              ),
+            ),
+            Positioned(
+              top: 24,
+              right: 12,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 26),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -388,6 +508,40 @@ class _LedgerScreenState extends State<LedgerScreen> {
             Padding(
               padding: const EdgeInsets.only(top: 3),
               child: _statusChip(row),
+            ),
+          if (!isBill &&
+              !isOpening &&
+              e.proofPath.isNotEmpty &&
+              File(e.proofPath).existsSync())
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(6),
+                onTap: () => _showPhotoFull(e.proofPath),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Ruby.fieldBg,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.image_outlined, size: 13, color: Ruby.ruby),
+                      SizedBox(width: 4),
+                      Text(
+                        'VIEW SCREENSHOT',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                          color: Ruby.ruby,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
         ],
       ),

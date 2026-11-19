@@ -564,6 +564,7 @@ class Repo {
     required String mode,
     required DateTime date,
     String note = '',
+    String proofPath = '',
     String? billId,
   }) async {
     final db = await _db;
@@ -577,6 +578,7 @@ class Repo {
       payDay: _dayKey(date.millisecondsSinceEpoch),
       mode: mode,
       note: note,
+      proofPath: proofPath,
       createdAt: now,
       updatedAt: now,
     );
@@ -607,7 +609,7 @@ class Repo {
       WHERE customer_id = ? AND is_deleted = 0
     ''', [customerId]);
     final payRows = await db.rawQuery('''
-      SELECT id, pay_date, amount_paise, mode, note, is_deleted FROM payments
+      SELECT id, pay_date, amount_paise, mode, note, proof_path, is_deleted FROM payments
       WHERE customer_id = ? AND is_deleted = 0
     ''', [customerId]);
 
@@ -679,6 +681,7 @@ class Repo {
           debitPaise: 0,
           creditPaise: amt,
           runningBalancePaise: running,
+          proofPath: (r['proof_path'] ?? '') as String,
         ));
       }
     }

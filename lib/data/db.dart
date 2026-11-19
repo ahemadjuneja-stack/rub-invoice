@@ -13,7 +13,7 @@ class DB {
     final dir = await getDatabasesPath();
     _handle = await openDatabase(
       p.join(dir, 'ruby_invoice.db'),
-      version: 3,
+      version: 4,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onUpgrade: (db, oldVersion, newVersion) async {
         // v2: customers gained shop_name + address.
@@ -28,6 +28,13 @@ class DB {
         // v3: purchase invoices (supplier bills with optional photo).
         if (oldVersion < 3) {
           await _createPurchases(db);
+        }
+        // v4: payments can keep an optional payment-proof screenshot
+        // (UPI transfer screenshot etc.) on this phone.
+        if (oldVersion < 4) {
+          try {
+            await db.execute("ALTER TABLE payments ADD COLUMN proof_path TEXT DEFAULT ''");
+          } catch (_) {}
         }
       },
       onCreate: (db, version) async {
@@ -105,6 +112,7 @@ class DB {
             pay_day TEXT DEFAULT '',
             mode TEXT DEFAULT 'cash',
             note TEXT DEFAULT '',
+            proof_path TEXT DEFAULT '',
             created_at INTEGER DEFAULT 0,
             updated_at INTEGER DEFAULT 0,
             is_deleted INTEGER DEFAULT 0,
