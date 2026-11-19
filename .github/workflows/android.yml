@@ -46,6 +46,15 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
+      # The Flutter-gradle plugin requires the NDK matching flutter.ndkVersion
+      # (28.2.13676358 for Flutter 3.50.0). Runners do not always ship that
+      # exact version, and a failed auto-install breaks configuration with
+      # "sdkmanager finished with non-zero exit value 1". Install it explicitly.
+      - name: Install NDK (flutter.ndkVersion)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358"
+
       - name: Build release APK
         run: flutter build apk --release
 
