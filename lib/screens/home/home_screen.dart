@@ -40,6 +40,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Periodic background update check while the app stays open.
   Timer? _updateTimer;
 
+  /// False until this app session has hit the network once - every
+  /// fresh app open ALWAYS checks for a release, no throttle.
+  bool _sessionChecked = false;
+
+  /// Newest release known to be newer than the installed version. The
+  /// home banner keeps offering it (tap to open the popup) even when
+  /// the popup itself was closed or snoozed.
+  String? _availableTag;
+
   /// An update that was found while the user was inside another screen
   /// (billing, inventory...). The popup never interrupts bill entry -
   /// it lands here and shows the moment the user is back on home.
@@ -104,6 +113,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _loading = false;
     });
     SyncService.instance.syncSoon();
+    unawaited(_refreshAvailableTag());
     _flushDeferredUpdate();
   }
 
@@ -152,9 +162,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (has) {
         _deferredUpdateTag = null;
         await _rememberUpdateTag(tag);
+        unawaited(_refreshAvailableTag());
         await _showUpdateDialog(tag: tag);
       } else {
         await _forgetUpdateTag();
+        unawaited(_refreshAvailableTag());
         showSnack(context, 'You are on the latest version');
       }
     } catch (e) {
@@ -234,6 +246,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Home banner data: reads the remembered update tag and compares it
+  /// with the installed version.
+  Future<void> _refreshAvailableTag() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final tag = sp.getString('known_update_tag') ?? '';
+      final current = await PackageInfoHelper.version();
+      if (!mounted) return;
+      final has = tag.isNotEmpty && UpdateService.isNewerThan(tag, current);
+      if (_availableTag != (has ? tag : null)) {
+        setState(() => _availableTag = has ? tag : null);
+      }
+    } catch (_) {}
+  }
+
   /// "Later" hides the popup for 12 hours - but a NEWER release always
   /// pops up immediately, snooze applies to that exact version only.
   Future<void> _snoozeCurrentUpdate() async {
@@ -267,7 +294,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // First run after an install/update always checks immediately.
       final current = await PackageInfoHelper.version();
       final justUpdated = (sp.getString('last_update_check_version') ?? '') != current;
-      if (!justUpdated && now - last < 15 * 60 * 1000) {
+      // Every fresh app open checks the network once - the 15-minute
+      // throttle only limits re-checks inside the SAME session (resume
+      // / periodic timer). So a new release can never be missed.
+      final firstOfSession = !_sessionChecked;
+      _sessionChecked = true;
+      if (!justUpdated && !firstOfSession && now - last < 15 * 60 * 1000) {
         _flushDeferredUpdate();
         return;
       }
@@ -277,9 +309,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       if (!has) {
         await _forgetUpdateTag();
+        unawaited(_refreshAvailableTag());
         return;
       }
       await _rememberUpdateTag(tag);
+      unawaited(_refreshAvailableTag());
       unawaited(UpdateService.instance.downloadApk());
       if (_snoozed(tag, sp, now)) {
         // Same version the user pushed away recently - stay quiet, but
@@ -753,7 +787,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       builder: (context, busy, _) => ValueListenableBuilder<String?>(
         valueListenable: UpdateService.instance.readyPath,
         builder: (context, path, _) {
-          if (!busy && path == null) return const SizedBox.shrink();
+          if (!busy && path == null) {
+            // Nothing downloading - but if a newer release is known,
+            // keep a tappable banner on top so it can never be missed.
+            final tag = _availableTag;
+            if (tag == null || tag.isEmpty) return const SizedBox.shrink();
+            return Container(
+              margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              decoration: BoxDecoration(
+                color: Ruby.rubyLight,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Ruby.ruby.withValues(alpha: 0.35)),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _showUpdateDialog(tag: tag),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.new_releases_outlined, size: 20, color: Ruby.ruby),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'New version v$tag available - tap to update',
+                          style: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w700, color: Ruby.ink),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
           return Container(
             margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),

@@ -7,8 +7,9 @@ import '../../data/repo.dart';
 import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
+import '../billing/billing_screen.dart';
 
-/// Bill detail: items, totals, share PDF, delete.
+/// Bill detail: items, totals, share PDF, edit (pen), delete.
 class BillViewScreen extends StatefulWidget {
   final String billId;
   const BillViewScreen({super.key, required this.billId});
@@ -21,6 +22,7 @@ class _BillViewScreenState extends State<BillViewScreen> {
   Bill? _bill;
   List<BillItem> _items = [];
   Map<String, String> _shop = {};
+  Customer? _cust;
   String _city = '';
   String _phone = '';
   int _balanceAfter = 0;
@@ -43,11 +45,27 @@ class _BillViewScreenState extends State<BillViewScreen> {
       _bill = bill;
       _items = items;
       _shop = shop;
+      _cust = cust;
       _city = cust?.city ?? '';
       _phone = cust?.phone ?? '';
       _balanceAfter = entries.isEmpty ? 0 : entries.last.runningBalancePaise;
       _loading = false;
     });
+  }
+
+  /// Opens the bill in the billing screen with every line editable -
+  /// same invoice number is kept, ledger and stock recomputed on save.
+  Future<void> _edit() async {
+    final bill = _bill;
+    final cust = _cust;
+    if (bill == null || cust == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BillingScreen(customer: cust, editBill: bill),
+      ),
+    );
+    if (mounted) _load(); // refresh items, total and balance after the edit
   }
 
   Future<void> _share() async {
@@ -79,6 +97,16 @@ class _BillViewScreenState extends State<BillViewScreen> {
     if (mounted) Navigator.pop(context);
   }
 
+  /// Miracle-style identity: "City - Name" (e.g. "Rajkot - Riya") on
+  /// one line, exactly like the billing screen header.
+  String get _customerTitle {
+    final city = _city.trim();
+    final shop = (_cust?.shopName ?? '').trim();
+    final label = shop.isNotEmpty ? shop : (_bill?.customerName ?? '');
+    if (city.isNotEmpty && label.isNotEmpty) return '$city - $label';
+    return label;
+  }
+
   @override
   Widget build(BuildContext context) {
     final bill = _bill;
@@ -86,6 +114,11 @@ class _BillViewScreenState extends State<BillViewScreen> {
       appBar: RubyAppBar(
         title: bill == null ? 'Bill' : 'Bill #${bill.billNo}',
         actions: [
+          IconButton(
+            onPressed: bill == null ? null : _edit,
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Edit bill',
+          ),
           IconButton(onPressed: bill == null ? null : _share, icon: const Icon(Icons.share)),
           IconButton(onPressed: bill == null ? null : _delete, icon: const Icon(Icons.delete_outline)),
         ],
@@ -108,17 +141,15 @@ class _BillViewScreenState extends State<BillViewScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              bill?.customerName ?? '',
+                              _customerTitle,
                               style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: Ruby.ink),
                             ),
                             const SizedBox(height: 3),
-                            Text(
-                              [
-                                if (_city.isNotEmpty) _city,
-                                if (_phone.isNotEmpty) _phone,
-                              ].join('  •  '),
-                              style: const TextStyle(fontSize: 12.5, color: Ruby.muted),
-                            ),
+                            if (_phone.isNotEmpty)
+                              Text(
+                                _phone,
+                                style: const TextStyle(fontSize: 12.5, color: Ruby.muted),
+                              ),
                           ],
                         ),
                       ),

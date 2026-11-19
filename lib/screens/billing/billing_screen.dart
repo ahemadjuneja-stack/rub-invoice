@@ -20,7 +20,13 @@ import '../../widgets/widgets.dart';
 ///  - totals are computed on integer paise: no rounding mistakes
 class BillingScreen extends StatefulWidget {
   final Customer customer;
-  const BillingScreen({super.key, required this.customer});
+
+  /// When set, this screen edits an ALREADY-SAVED bill (the pen icon on
+  /// the bill view): same invoice number, items / qty / price / date all
+  /// changeable, ledger and stock recomputed on save.
+  final Bill? editBill;
+
+  const BillingScreen({super.key, required this.customer, this.editBill});
 
   @override
   State<BillingScreen> createState() => _BillingScreenState();
@@ -28,6 +34,9 @@ class BillingScreen extends StatefulWidget {
 
 class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserver {
   final _repo = Repo.instance;
+
+  /// True while editing an existing bill instead of making a new one.
+  bool get _isEdit => widget.editBill != null;
 
   final TextEditingController _productC = TextEditingController();
   final TextEditingController _qtyC = TextEditingController();
@@ -62,8 +71,41 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadCatalog();
-    _loadHeader();
-    _restoreDraft();
+    if (_isEdit) {
+      _loadForEdit();
+    } else {
+      _loadHeader();
+      _restoreDraft();
+    }
+  }
+
+  /// Fills the editor with the saved bill so every line can be changed
+  /// (qty, price, add, remove) and the date can move - the invoice
+  /// number stays the same. Drafts are never touched while editing.
+  Future<void> _loadForEdit() async {
+    final bill = widget.editBill!;
+    final (_, items) = await _repo.billWithItems(bill.id);
+    final paid = await _repo.paidWithBill(bill.id);
+    if (!mounted) return;
+    setState(() {
+      _cart
+        ..clear()
+        ..addAll([
+          for (final it in items)
+            CartLine(
+              productId: it.productId,
+              name: it.productName,
+              qty: it.qty,
+              ratePaise: it.ratePaise,
+            ),
+        ]);
+      _billNo = bill.billNo;
+      _billDate = DateTime.fromMillisecondsSinceEpoch(bill.billDate);
+      if (paid > 0) {
+        _payMode = 'jama';
+        _paidC.text = Money.fmtRupeesInput(paid);
+      }
+    });
   }
 
   Future<void> _loadHeader() async {
@@ -100,6 +142,9 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
   // ---------------- draft (auto-save) ----------------
 
   Future<void> _persistDraft() async {
+    // Editing a saved bill never touches the auto-save draft, so an
+    // unrelated in-progress bill can never be overwritten.
+    if (_isEdit) return;
     if (_cart.isEmpty) {
       await BillDraftService.instance.clear();
       return;
@@ -116,6 +161,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
   }
 
   Future<void> _restoreDraft() async {
+    if (_isEdit) return;
     final d = await BillDraftService.instance.load();
     if (!mounted || d == null || _restored) return;
     if (d.customerId != widget.customer.id || d.lines.isEmpty) return;
@@ -132,7 +178,9 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
         _paidC.text = Money.fmtRupeesInput(d.paidNowPaise);
       }
       if (d.billDateMs > 0) {
-        _billDate = Dt.dayStartOf(d.billDateMs);
+        // Keep the exact saved time of day (never round to midnight -
+        // the bill must resume with its real time, e.g. 8:44 PM).
+        _billDate = DateTime.fromMillisecondsSinceEpoch(d.billDateMs);
       }
     });
     showSnack(context, 'Draft restored - continue where you left');
@@ -268,13 +316,25 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
     }
     setState(() => _saving = true);
     try {
-      final bill = await _repo.saveBill(
-        customerId: widget.customer.id,
-        customerName: widget.customer.name,
-        lines: _cart,
-        paidNowPaise: paid,
-        billDate: _billDate,
-      );
+      final Bill bill;
+      if (_isEdit) {
+        // Pen-edit of a saved bill: same invoice number; items, stock,
+        // payment and ledger are all recomputed by the repository.
+        bill = await _repo.updateBill(
+          existing: widget.editBill!,
+          lines: _cart,
+          paidNowPaise: paid,
+          billDate: _billDate,
+        );
+      } else {
+        bill = await _repo.saveBill(
+          customerId: widget.customer.id,
+          customerName: widget.customer.name,
+          lines: _cart,
+          paidNowPaise: paid,
+          billDate: _billDate,
+        );
+      }
       // The bill is now safely in the database. Empty the cart FIRST so
       // that dispose / lifecycle hooks can never re-persist the saved
       // items as a "resume" draft. (That ghost draft made the same bill
@@ -286,16 +346,18 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
         _payMode = 'udhar';
         _billDate = Dt.todayStart();
       });
-      await BillDraftService.instance.clear(); // draft consumed
+      if (!_isEdit) {
+        await BillDraftService.instance.clear(); // draft consumed
+      }
       SyncService.instance.syncSoon();
       if (!mounted) return;
-      await _showSavedSheet(bill);
+      await _showSavedSheet(bill, edited: _isEdit);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  Future<void> _showSavedSheet(Bill bill) async {
+  Future<void> _showSavedSheet(Bill bill, {bool edited = false}) async {
     final (full, items) = await _repo.billWithItems(bill.id);
     final shop = await _repo.shopProfile();
     final cust = await _repo.getCustomer(widget.customer.id);
@@ -327,7 +389,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Bill #${bill.billNo} saved',
+                          edited ? 'Bill #${bill.billNo} updated' : 'Bill #${bill.billNo} saved',
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Ruby.ink),
                         ),
                         Text(
@@ -355,30 +417,39 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                     balanceAfterPaise: balance,
                   );
                   if (mounted) {
-                    Navigator.of(context).popUntil((r) => r.isFirst);
+                    if (edited) {
+                      Navigator.of(context).pop(); // back to the bill view
+                    } else {
+                      Navigator.of(context).popUntil((r) => r.isFirst);
+                    }
                   }
                 },
               ),
               const SizedBox(height: 8),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.post_add, size: 20),
-                label: const Text('NEW BILL (SAME CUSTOMER)'),
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  setState(() {
-                    _cart.clear();
-                    _paidC.clear();
-                    _payMode = 'udhar';
-                    _billDate = Dt.todayStart();
-                  });
-                  _persistDraft();
-                },
-              ),
-              const SizedBox(height: 8),
+              if (!edited)
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.post_add, size: 20),
+                  label: const Text('NEW BILL (SAME CUSTOMER)'),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    setState(() {
+                      _cart.clear();
+                      _paidC.clear();
+                      _payMode = 'udhar';
+                      _billDate = Dt.todayStart();
+                    });
+                    _persistDraft();
+                  },
+                ),
+              if (!edited) const SizedBox(height: 8),
               TextButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  Navigator.of(context).popUntil((r) => r.isFirst);
+                  if (edited) {
+                    Navigator.of(context).pop(); // back to the bill view
+                  } else {
+                    Navigator.of(context).popUntil((r) => r.isFirst);
+                  }
                 },
                 child: const Text('Done'),
               ),
@@ -411,7 +482,9 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
       appBar: RubyAppBar(
         showBrand: false,
         title: _headerTitle,
-        subtitle: 'Invoice #${_billNo == 0 ? '...' : _billNo}',
+        subtitle: _isEdit
+            ? 'Editing Invoice #${_billNo == 0 ? '...' : _billNo}'
+            : 'Invoice #${_billNo == 0 ? '...' : _billNo}',
       ),
       body: Column(
         children: [
@@ -447,7 +520,16 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
       initialEntryMode: DatePickerEntryMode.calendarOnly,
     );
     if (picked != null && mounted) {
-      setState(() => _billDate = DateTime(picked.year, picked.month, picked.day));
+      // Keep the CURRENT time of day: a bill made at 8:44 PM shows
+      // 8:44 PM on the list, never a confusing 12:00 AM.
+      setState(() => _billDate = DateTime(
+            picked.year,
+            picked.month,
+            picked.day,
+            now.hour,
+            now.minute,
+            now.second,
+          ));
       _persistDraft();
     }
   }
@@ -820,7 +902,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                         style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800, color: Colors.white),
                       ),
                       Text(
-                        'Total items: ${_cart.fold<int>(0, (s, l) => s + l.qty.round())}',
+                        'Items: ${_cart.length}',
                         style: const TextStyle(fontSize: 11, color: Color(0xFFF3B7BC)),
                       ),
                     ],
@@ -835,9 +917,9 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                   onPressed: _saving ? null : _save,
                   child: _saving
                       ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Ruby.ruby))
-                      : const Text(
-                          'SAVE & PRINT / PDF',
-                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.2),
+                      : Text(
+                          _isEdit ? 'UPDATE BILL' : 'SAVE & PRINT / PDF',
+                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.2),
                         ),
                 ),
               ],

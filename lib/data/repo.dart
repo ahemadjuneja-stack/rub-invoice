@@ -347,6 +347,143 @@ class Repo {
     });
   }
 
+  /// Total "received now" recorded with this bill (its linked payments).
+  /// Used when the bill is opened for editing so the received amount
+  /// comes back exactly as it was saved.
+  Future<int> paidWithBill(String billId) async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+      'SELECT COALESCE(SUM(amount_paise), 0) AS paid FROM payments '
+      'WHERE bill_id = ? AND is_deleted = 0',
+      [billId],
+    );
+    return (rows.first['paid'] as int?) ?? 0;
+  }
+
+  /// Edits an already-saved bill (the pen icon on the bill view):
+  /// same bill id and invoice number, items replaced, total recomputed,
+  /// stock re-adjusted (old restored, new deducted) and the "received
+  /// now" payment replaced. The ledger is derived from bills + payments,
+  /// so it is automatically correct after the edit. [billDate] may move
+  /// the bill to another day, time of day preserved.
+  Future<Bill> updateBill({
+    required Bill existing,
+    required List<CartLine> lines,
+    int paidNowPaise = 0,
+    String note = '',
+    DateTime? billDate,
+  }) async {
+    final db = await _db;
+    final now = _now();
+    final chosen =
+        billDate ?? DateTime.fromMillisecondsSinceEpoch(existing.billDate);
+    final billMs = chosen.millisecondsSinceEpoch;
+    final dayKey = _dayKey(billMs);
+
+    return db.transaction<Bill>((txn) async {
+      // restore stock for the OLD items, then retire them (tombstones
+      // keep the sync history intact)
+      final oldItems = await txn.rawQuery(
+        'SELECT * FROM bill_items WHERE bill_id = ? AND is_deleted = 0',
+        [existing.id],
+      );
+      for (final it in oldItems) {
+        final pid = it['product_id'] as String?;
+        final qty = ((it['qty'] ?? 0) as num).toDouble();
+        if (pid != null) {
+          await txn.rawUpdate('''
+            UPDATE products SET stock_qty = stock_qty + ?, updated_at = ?, dirty = 1
+            WHERE id = ? AND track_stock = 1
+          ''', [qty, now, pid]);
+        }
+      }
+      await txn.rawUpdate(
+        'UPDATE bill_items SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE bill_id = ?',
+        [now, existing.id],
+      );
+
+      int subtotal = 0;
+      for (final l in lines) {
+        subtotal += l.amountPaise;
+      }
+
+      await txn.update(
+        'bills',
+        {
+          'bill_date': billMs,
+          'bill_day': dayKey,
+          'subtotal_paise': subtotal,
+          'total_paise': subtotal,
+          'note': note.isNotEmpty ? note : existing.note,
+          'updated_at': now,
+          'dirty': 1,
+        },
+        where: 'id = ?',
+        whereArgs: [existing.id],
+      );
+
+      for (final l in lines) {
+        final item = BillItem(
+          id: _uuid.v4(),
+          billId: existing.id,
+          productId: l.productId,
+          productName: l.name,
+          qty: l.qty,
+          ratePaise: l.ratePaise,
+          amountPaise: l.amountPaise,
+          createdAt: now,
+        );
+        await txn.insert('bill_items', item.toMap());
+
+        if (l.productId != null) {
+          await txn.rawUpdate('''
+            UPDATE products SET stock_qty = MAX(0, stock_qty - ?), updated_at = ?, dirty = 1
+            WHERE id = ? AND track_stock = 1
+          ''', [l.qty, now, l.productId]);
+        }
+      }
+
+      // replace the "received with bill" payment so the ledger and the
+      // customer balance follow the edited amount
+      await txn.rawUpdate(
+        'UPDATE payments SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE bill_id = ?',
+        [now, existing.id],
+      );
+      if (paidNowPaise > 0) {
+        final p = Payment(
+          id: _uuid.v4(),
+          customerId: existing.customerId,
+          billId: existing.id,
+          amountPaise: paidNowPaise,
+          payDate: billMs,
+          payDay: dayKey,
+          mode: 'cash',
+          note: 'Received with bill #${existing.billNo}',
+          createdAt: now,
+          updatedAt: now,
+        );
+        await txn.insert('payments', p.toMap());
+      }
+
+      return Bill(
+        id: existing.id,
+        billNo: existing.billNo,
+        customerId: existing.customerId,
+        customerName: existing.customerName,
+        billDate: billMs,
+        billDay: dayKey,
+        subtotalPaise: subtotal,
+        discountPaise: existing.discountPaise,
+        totalPaise: subtotal,
+        note: note.isNotEmpty ? note : existing.note,
+        createdAt: existing.createdAt,
+        updatedAt: now,
+        isDeleted: 0,
+        dirty: 1,
+      );
+    });
+  }
+
   Future<(Bill, List<BillItem>)> billWithItems(String billId) async {
     final db = await _db;
     final b = await db.rawQuery('SELECT * FROM bills WHERE id = ?', [billId]);
@@ -359,12 +496,15 @@ class Repo {
   }
 
   /// Bills for a list of local day keys (home screen: today + yesterday).
+  /// Newest first: the bill saved most recently always lands on top,
+  /// even when several share the same chosen date (e.g. midnight ties).
   Future<Map<String, List<Bill>>> billsForDays(List<String> dayKeys) async {
     final db = await _db;
     if (dayKeys.isEmpty) return {};
     final placeholders = List.filled(dayKeys.length, '?').join(', ');
     final rows = await db.rawQuery(
-      'SELECT * FROM bills WHERE is_deleted = 0 AND bill_day IN ($placeholders) ORDER BY bill_date DESC',
+      'SELECT * FROM bills WHERE is_deleted = 0 AND bill_day IN ($placeholders) '
+      'ORDER BY bill_date DESC, created_at DESC, bill_no DESC',
       dayKeys,
     );
     final out = <String, List<Bill>>{};
