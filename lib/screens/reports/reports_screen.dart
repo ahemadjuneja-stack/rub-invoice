@@ -96,9 +96,6 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     }
   }
 
-  int get _fyStartYear => _period == _Period.fy ? _year : -1;
-  int get _fyEndYear => _fyStartYear + 1;
-
   Future<void> _load() async {
     setState(() => _loading = true);
     final byMonth = await Repo.instance.salesByMonth(_startDay, _endDay);
