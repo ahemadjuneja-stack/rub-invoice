@@ -41,6 +41,11 @@ class _AuthGateState extends State<AuthGate> {
   FirebaseAuth? _fb;
   bool _listenersBound = false;
 
+  /// Set on the first authStateChanges emission. Until then a Firebase
+  /// login is being RESTORED (this survives APK updates) - the splash
+  /// must stay up instead of flashing the registration screen.
+  bool _authChecked = false;
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +80,7 @@ class _AuthGateState extends State<AuthGate> {
       try {
         _fb = FirebaseAuth.instance;
         _fb!.authStateChanges().listen((user) {
+          _authChecked = true;
           if (user != null) {
             _access.startWatching(); // live kill-switch + offline cache
             SyncService.instance.syncSoon();
@@ -117,16 +123,21 @@ class _AuthGateState extends State<AuthGate> {
     if (_loading) return _splash();
 
     // ---------- OFFLINE MODE ----------
+    final fbReady = SyncService.instance.fbReady;
     final fbSignedIn = _fb?.currentUser != null;
-    if (!SyncService.instance.fbReady || !fbSignedIn) {
-      if (!SyncService.instance.fbReady) {
-        if (!_localRegistered) return RegistrationScreen(onDone: _load);
-        if (_hasPin && !_unlocked) {
-          return PinLockScreen(onUnlocked: () => setState(() => _unlocked = true));
-        }
-        return const HomeScreen();
+    if (!fbReady) {
+      if (!_localRegistered) return RegistrationScreen(onDone: _load);
+      if (_hasPin && !_unlocked) {
+        return PinLockScreen(onUnlocked: () => setState(() => _unlocked = true));
       }
-      // Firebase configured but not signed in yet.
+      return const HomeScreen();
+    }
+    // Firebase mode. A saved session survives APK updates (same signing
+    // key + Firebase auto-persistence), so while the auth state has not
+    // emitted yet we keep the splash up - never flash registration.
+    if (!fbSignedIn && !_authChecked) return _splash(restoring: true);
+    if (!fbSignedIn) {
+      // Firebase configured but genuinely signed out.
       return RegistrationScreen(onDone: _load);
     }
 
@@ -151,16 +162,19 @@ class _AuthGateState extends State<AuthGate> {
     }
   }
 
-  Widget _splash() {
+  Widget _splash({bool restoring = false}) {
+    final subtitle = restoring
+        ? 'Restoring your login...'
+        : 'Fast billing. Zero mistakes.';
     return Scaffold(
       backgroundColor: Ruby.ruby,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.receipt_long, color: Colors.white, size: 54),
-            SizedBox(height: 12),
-            Text(
+          children: [
+            const Icon(Icons.receipt_long, color: Colors.white, size: 54),
+            const SizedBox(height: 12),
+            const Text(
               'RUBY INVOICE',
               style: TextStyle(
                 color: Colors.white,
@@ -169,10 +183,13 @@ class _AuthGateState extends State<AuthGate> {
                 letterSpacing: 4,
               ),
             ),
-            SizedBox(height: 6),
+            const SizedBox(height: 6),
             Text(
-              'Fast billing. Zero mistakes.',
-              style: TextStyle(color: Color(0xFFF6C9CD), fontSize: 12.5, letterSpacing: 0.4),
+              subtitle,
+              style: const TextStyle(
+                  color: Color(0xFFF6C9CD),
+                  fontSize: 12.5,
+                  letterSpacing: 0.4),
             ),
           ],
         ),

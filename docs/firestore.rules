@@ -13,13 +13,6 @@ service cloud.firestore {
           && request.auth.uid == 'PASTE_ADMIN_UID_HERE';
     }
 
-    // Fields only the Admin may change (the kill-switch).
-    function onlyAdminFieldsChanged() {
-      return request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['status', 'expiryDate', 'maxDevices',
-                    'registeredDevices', 'updatedAt']);
-    }
-
     // ------------------------------------------------------------------
     // SELF-SERVE ACTIVATION: the remote `auto_approve` flag (config/app,
     // docs/REMOTE_CONTROL.md) lets brand-new accounts go live without a
@@ -46,14 +39,15 @@ service cloud.firestore {
                       && (request.resource.data.status == 'pending'
                           || (request.resource.data.status == 'active'
                               && isAutoApproveOn()));
-      // Owner may only touch their own PIN hash / profile fields;
-      // status, expiryDate, maxDevices and registeredDevices are
-      // admin-controlled (plus the automatic device self-registration).
+      // Owner may only touch their own PROFILE fields (business name,
+      // phone, PIN hash). status, expiryDate and maxDevices can never
+      // move through the owner path - registeredDevices has its own
+      // limited clause below, everything else is admin-only.
       allow update: if request.auth != null && (
                         (request.auth.uid == userId
-                         && onlyAdminFieldsChanged()
-                         && request.resource.data.status == resource.data.status
-                         && request.resource.data.expiryDate == resource.data.expiryDate)
+                         && request.resource.data.diff(resource.data).affectedKeys()
+                               .hasOnly(['businessName', 'phone', 'pinHash',
+                                         'pinSalt', 'updatedAt']))
                         || isAdmin()
                         || (request.auth.uid == userId
                             // self device registration within the limit

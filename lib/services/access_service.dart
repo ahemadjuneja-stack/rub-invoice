@@ -183,7 +183,7 @@ class AccessService {
     }
     // Evaluate from the cached snapshot first, so an offline launch is
     // protected by the last known admin decision.
-    _evaluateFromCache();
+    _evaluateOffline();
     _sub = FirebaseFirestore.instance
         .collection('users')
         .doc(user.uid)
@@ -200,9 +200,11 @@ class AccessService {
       account.value = info;
       state.value = info.evaluateFor(await deviceId());
     }, onError: (e) {
-      // Listener error (permissions/network): keep the cached verdict.
+      // Listener error (permissions/network): cached verdict first, then
+      // the local registration fallback so an updated device never hangs
+      // on the splash.
       if (state.value == AccessState.checking) {
-        _evaluateFromCache();
+        _evaluateOffline();
       }
     });
   }
@@ -234,7 +236,12 @@ class AccessService {
       account.value = info;
       state.value = info.evaluateFor(await deviceId());
     } catch (_) {
-      // Offline / permission error: the cached verdict stays in force.
+      // Offline / permission error: cached verdict, then the local
+      // registration fallback - a previously registered device keeps
+      // working until connectivity returns and the server re-checks.
+      if (state.value == AccessState.checking) {
+        await _evaluateOffline();
+      }
     }
   }
 
@@ -251,6 +258,20 @@ class AccessService {
     } catch (_) {
       // corrupt cache - ignore, the live listener will decide
     }
+  }
+
+  /// Update / offline safety net: the cached admin verdict first; when
+  /// nothing is cached yet, fall back to the local registration marks.
+  /// A phone that was registered on THIS device earlier (the APK-update
+  /// case) stays allowed instead of hanging on the splash - the very
+  /// next listener event / verifyOnce() re-checks the server, and the
+  /// admin kill-switch applies the moment connectivity returns.
+  Future<void> _evaluateOffline() async {
+    await _evaluateFromCache();
+    if (state.value != AccessState.checking) return;
+    final sp = await SharedPreferences.getInstance();
+    final reg = sp.getString('reg_phone') ?? '';
+    state.value = reg.isEmpty ? AccessState.pending : AccessState.allowed;
   }
 
   Future<void> _cacheAccount(AccountInfo info) async {

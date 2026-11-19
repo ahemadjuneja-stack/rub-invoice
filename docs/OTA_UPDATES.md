@@ -30,6 +30,24 @@ banner on the Billing tab); when done the user just taps **Install** -
 > (direct-to-customer, WhatsApp groups, website). The Play Store has its
 > own update mechanism.
 
+## Installing an update NEVER logs the user out
+
+Guaranteed by three layers (no extra code needed):
+
+1. **Same signing key forever** - every build (debug + release) signs
+   with the committed `ruby-invoice.keystore`. Android only wipes app
+   data on uninstall, never on an in-place update; a mismatched key
+   would refuse to install instead of wiping.
+2. **Firebase auto-persistence** - the Android Firebase Auth SDK keeps
+   the login token on the device; after an update the session restores
+   by itself (AuthGate additionally shows "Restoring your login..."
+   instead of flashing the registration screen).
+3. **Local caches** - the access verdict (`users/{uid}` snapshot cache),
+   the Quick PIN and `reg_phone` all survive updates, and
+   `AccessService._evaluateOffline()` keeps a previously registered
+   device allowed even when the first post-update launch has no
+   network - the server re-checks as soon as connectivity returns.
+
 ## Pipeline 2 - Shorebird (true OTA Dart patches, optional)
 
 Shorebird pushes **Dart code patches** without reinstalling the APK -
