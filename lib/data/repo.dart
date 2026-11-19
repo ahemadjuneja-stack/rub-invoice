@@ -531,6 +531,69 @@ class Repo {
     return out;
   }
 
+  // ---------------- accounts (hisab) ----------------
+
+  /// Net udhaar of ALL customers right now: opening balances + every
+  /// bill - every payment (soft-deleted rows excluded).
+  Future<int> totalUdhaar() async {
+    final db = await _db;
+    final r = await db.rawQuery('''
+      SELECT
+        (SELECT COALESCE(SUM(opening_balance_paise), 0) FROM customers WHERE is_deleted = 0) +
+        (SELECT COALESCE(SUM(total_paise), 0) FROM bills WHERE is_deleted = 0) -
+        (SELECT COALESCE(SUM(amount_paise), 0) FROM payments WHERE is_deleted = 0)
+        AS bal
+    ''');
+    return ((r.first['bal'] as num?) ?? 0).toInt();
+  }
+
+  /// All-time purchases total (every non-deleted purchase invoice).
+  Future<int> totalPurchases() async {
+    final db = await _db;
+    final r = await db.rawQuery(
+      'SELECT COALESCE(SUM(amount_paise), 0) AS t FROM purchases WHERE is_deleted = 0',
+    );
+    return ((r.first['t'] as num?) ?? 0).toInt();
+  }
+
+  /// Money IN (payments received) and money OUT (purchase invoices)
+  /// between [startMs, endMs) - end exclusive. Feeds the month and
+  /// financial-year aaya / gaya totals on the Accounts screen.
+  Future<(int moneyIn, int moneyOut)> inOutForRange(int startMs, int endMs) async {
+    final db = await _db;
+    final pay = await db.rawQuery(
+      'SELECT COALESCE(SUM(amount_paise), 0) AS t FROM payments '
+      'WHERE is_deleted = 0 AND pay_date >= ? AND pay_date < ?',
+      [startMs, endMs],
+    );
+    final pur = await db.rawQuery(
+      'SELECT COALESCE(SUM(amount_paise), 0) AS t FROM purchases '
+      'WHERE is_deleted = 0 AND purchase_date >= ? AND purchase_date < ?',
+      [startMs, endMs],
+    );
+    return (
+      ((pay.first['t'] as num?) ?? 0).toInt(),
+      ((pur.first['t'] as num?) ?? 0).toInt(),
+    );
+  }
+
+  /// Earliest transaction timestamp across bills, payments and purchases
+  /// (0 when the shop has no data yet). Year / FY lists start from this,
+  /// so an old year shows up only after old-dated data was entered.
+  Future<int> firstTransactionMs() async {
+    final db = await _db;
+    final r = await db.rawQuery('''
+      SELECT MIN(m) AS t FROM (
+        SELECT MIN(bill_date) AS m FROM bills WHERE is_deleted = 0
+        UNION ALL
+        SELECT MIN(pay_date) AS m FROM payments WHERE is_deleted = 0
+        UNION ALL
+        SELECT MIN(purchase_date) AS m FROM purchases WHERE is_deleted = 0
+      )
+    ''');
+    return ((r.first['t'] as num?) ?? 0).toInt();
+  }
+
   Future<void> deleteBill(String billId) async {
     final db = await _db;
     final now = _now();

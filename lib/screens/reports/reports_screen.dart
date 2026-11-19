@@ -25,8 +25,14 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
   late final TabController _tabs = TabController(length: 3, vsync: this);
 
   _Period _period = _Period.fy; // Indian shops think in FYs by default
-  late int _year = DateTime.now().year;
+  late int _year = Dt.fyStartYear(DateTime.now());
   int _month = DateTime.now().month;
+
+  // Year / FY dropdown choices are built from the earliest transaction
+  // in the database - an old year shows up only when old-dated data was
+  // entered, and the list never goes before the shop's first data.
+  List<int> _fyChoices = [Dt.fyStartYear(DateTime.now())];
+  List<int> _calYears = [DateTime.now().year];
 
   List<(String, int, int)> _series = []; // by month (year/fy) or by day (month)
   List<Map<String, Object?>> _customers = [];
@@ -90,13 +96,8 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     }
   }
 
-  List<int> get _years => [
-        DateTime.now().year + 1,
-        DateTime.now().year,
-        DateTime.now().year - 1,
-        DateTime.now().year - 2,
-        DateTime.now().year - 3,
-      ];
+  int get _fyStartYear => _period == _Period.fy ? _year : -1;
+  int get _fyEndYear => _fyStartYear + 1;
 
   Future<void> _load() async {
     setState(() => _loading = true);
@@ -106,11 +107,29 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         : byMonth;
     final customers = await Repo.instance.customerSummaries(_startDay, _endDay);
     final products = await Repo.instance.topProducts(_startDay, _endDay);
+    final first = await Repo.instance.firstTransactionMs();
+
+    final now = DateTime.now();
+    final curFy = Dt.fyStartYear(now);
+    final startFy =
+        first > 0 ? Dt.fyStartYear(DateTime.fromMillisecondsSinceEpoch(first)) : curFy;
+    final fys = [for (int y = curFy; y >= startFy; y--) y];
+    final startYear = first > 0 ? DateTime.fromMillisecondsSinceEpoch(first).year : now.year;
+    final years = [for (int y = now.year; y >= startYear; y--) y];
+
     if (!mounted) return;
     setState(() {
       _series = series;
       _customers = customers;
       _products = products;
+      _fyChoices = fys;
+      _calYears = years;
+      // Keep the dropdown values valid after the lists refresh.
+      if (_period == _Period.fy) {
+        if (!fys.contains(_year)) _year = curFy;
+      } else if (!years.contains(_year)) {
+        _year = now.year;
+      }
       _loading = false;
     });
   }
@@ -195,7 +214,13 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         onTap: () {
           if (_period == p) return;
           setState(() {
-            if (p == _Period.fy) _year = _currentFyStart;
+            if (p == _Period.fy) {
+              _year = _currentFyStart;
+            } else if (!_calYears.contains(_year)) {
+              // Coming out of FY mode: _year holds an FY start year which
+              // may not be a valid calendar year here - snap to current.
+              _year = DateTime.now().year;
+            }
             _period = p;
           });
           _load();
@@ -241,7 +266,8 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
           _dropdown<int>(
             value: _year,
             items: [
-              for (final y in _years) DropdownMenuItem(value: y, child: Text('$y', style: const TextStyle(fontSize: 13))),
+              for (final y in _calYears)
+                DropdownMenuItem(value: y, child: Text('$y', style: const TextStyle(fontSize: 13))),
             ],
             onChanged: (y) {
               if (y == null) return;
@@ -252,14 +278,15 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         ],
       );
     }
+    final yearChoices = _period == _Period.fy ? _fyChoices : _calYears;
     return _dropdown<int>(
       value: _year,
       items: [
-        for (final y in _years)
+        for (final y in yearChoices)
           DropdownMenuItem(
             value: y,
             child: Text(
-              _period == _Period.fy ? 'FY $y-${('${(y + 1) % 100}').padLeft(2, '0')}' : '$y',
+              _period == _Period.fy ? Dt.fyLabel(y) : '$y',
               style: const TextStyle(fontSize: 13),
             ),
           ),

@@ -131,4 +131,20 @@ class Dt {
   static String fmtDateTime(DateTime d) => DateFormat('d MMM yyyy, hh:mm a').format(d);
 
   static String fmtDate(DateTime d) => DateFormat('d MMM yyyy').format(d);
+
+  // ---- Indian financial year: 1 April - 31 March ----
+
+  /// The FY (start year) that contains the given date.
+  /// Nov 2026 -> 2026 (FY 2026-27); Feb 2026 -> 2025 (FY 2025-26).
+  static int fyStartYear(DateTime d) => d.month >= 4 ? d.year : d.year - 1;
+
+  /// Local midnight of 1 April of the FY start year.
+  static DateTime fyStart(int fyStartYear) => DateTime(fyStartYear, 4, 1);
+
+  /// Exclusive end of the FY: 1 April of the next year.
+  static DateTime fyEndExclusive(int fyStartYear) => DateTime(fyStartYear + 1, 4, 1);
+
+  /// "FY 2026-27" style label.
+  static String fyLabel(int fyStartYear) =>
+      'FY $fyStartYear-${((fyStartYear + 1) % 100).toString().padLeft(2, '0')}';
 }
