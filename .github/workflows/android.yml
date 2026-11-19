@@ -84,8 +84,21 @@ jobs:
       - name: Summarize build failure
         if: failure()
         run: |
-          echo '## Build failure (log tail)' >> "$GITHUB_STEP_SUMMARY"
-          grep -B4 -A25 -E "What went wrong|FAILURE: Build failed|Caused by|error:" /tmp/build_full.log | tail -150 >> "$GITHUB_STEP_SUMMARY" || tail -80 /tmp/build_full.log >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo '## Build failure (log tail)'
+            grep -B4 -A25 -E "What went wrong|FAILURE: Build failed|Caused by|error:" /tmp/build_full.log | tail -150
+          } >> "$GITHUB_STEP_SUMMARY" || tail -80 /tmp/build_full.log >> "$GITHUB_STEP_SUMMARY"
+          # Publish the failure log to the ci-logs branch so it is readable
+          # via raw.githubusercontent.com without any API rate limits.
+          mkdir -p /tmp/logrepo && cd /tmp/logrepo
+          git init -q
+          git config user.email "ci@rubyinvoice.local" && git config user.name "CI Bot"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          tail -200 /tmp/build_full.log > failure.log
+          git add failure.log
+          git commit -qm "CI failure log for ${{ github.sha }}"
+          git branch -M ci-logs
+          git push -f origin ci-logs || true
 
       - name: Upload full build log artifact
         if: failure()
