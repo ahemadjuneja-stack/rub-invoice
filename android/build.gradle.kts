@@ -2,6 +2,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // CDN mirror of Maven Central, used as fallback on HTTP 429 throttling.
+        maven("https://repo1.maven.org/maven2")
     }
 }
 

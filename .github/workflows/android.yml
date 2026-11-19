@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - uses: subosito/flutter-action@v2
         with:
@@ -55,8 +55,44 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358"
 
+      # Fallback mirror for Maven Central throttling (repo.maven.apache.org
+      # sometimes 429s shared runner IPs). Applied as a Gradle init script so
+      # it also covers the buildscript classpaths of vendor plugins
+      # (cloud_firestore etc.), which declare their own repositories.
+      - name: Configure Maven Central mirror fallback
+        run: |
+          mkdir -p ~/.gradle/init.d
+          {
+            echo "gradle.projectsLoaded {"
+            echo "    rootProject.allprojects {"
+            echo "        buildscript {"
+            echo "            repositories {"
+            echo "                maven { url = uri('https://repo1.maven.org/maven2') }"
+            echo "            }"
+            echo "        }"
+            echo "    }"
+            echo "}"
+          } > ~/.gradle/init.d/mirror-fallback.gradle
+
       - name: Build release APK
-        run: flutter build apk --release
+        run: |
+          set -o pipefail
+          flutter build apk --release 2>&1 | tee /tmp/build_full.log
+
+      # Surface the real gradle error on the run page (step summaries are
+      # visible even when the raw log is too large for the UI to render).
+      - name: Summarize build failure
+        if: failure()
+        run: |
+          echo '## Build failure (log tail)' >> "$GITHUB_STEP_SUMMARY"
+          grep -B4 -A25 -E "What went wrong|FAILURE: Build failed|Caused by|error:" /tmp/build_full.log | tail -150 >> "$GITHUB_STEP_SUMMARY" || tail -80 /tmp/build_full.log >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload full build log artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/build_full.log
 
       - name: Upload APK artifact (every build)
         uses: actions/upload-artifact@v4

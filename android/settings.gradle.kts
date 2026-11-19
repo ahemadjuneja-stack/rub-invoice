@@ -14,6 +14,9 @@ pluginManagement {
         google()
         mavenCentral()
         gradlePluginPortal()
+        // CDN mirror of Maven Central, used as fallback when
+        // repo.maven.apache.org throttles (HTTP 429) runner IPs.
+        maven("https://repo1.maven.org/maven2")
     }
 }
 
