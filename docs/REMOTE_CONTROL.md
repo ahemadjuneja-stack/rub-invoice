@@ -17,6 +17,7 @@ Firebase Console -> Firestore Database -> Start collection:
 | `notice` | string | Yellow announcement banner on the Billing tab. Empty string = hidden. |
 | `min_version` | string | Force-update gate. If the installed version is older, the app opens a non-dismissable update screen with background download + Install. Empty string = off. |
 | `features` | map | Per-feature on/off switches. Any key not listed = ON. |
+| `auto_approve` | boolean | When `true` (default, also when the doc/field is missing) new registrations activate themselves instantly - no admin step. Set `false` to make every new account wait for admin approval. |
 
 ## Feature keys
 

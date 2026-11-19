@@ -73,7 +73,7 @@ test/                       30 tests: money math, FIFO settlement, access rules
 .github/workflows/android.yml   analyze + APK artifact + Release on tags
 tool/                       bootstrap.sh, apply_android_config.sh
 docs/                       Firebase, ADMIN_CONTROL, OTA, push guides + Firestore rules
-assets/icon/                app icon (R mark + RUBI), adaptive foreground
+assets/icon/                app icon (R mark + RUBY INVOICE), adaptive foreground
 assets/fonts/               DejaVu (rupee sign prints correctly in PDFs)
 ```
 

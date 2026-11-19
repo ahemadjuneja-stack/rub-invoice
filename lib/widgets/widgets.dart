@@ -145,8 +145,8 @@ Future<void> showSnack(BuildContext context, String message, {bool error = false
   );
 }
 
-/// RUBI brand lockup: origami R mark + RUBI wordmark + RESIDENCIAS tagline.
-/// Matches the printed brand identity (assets/icon/logo_r.png).
+/// RUBY INVOICE brand lockup: origami R mark + RUBY wordmark + INVOICE
+/// tagline. Matches the printed brand identity (assets/icon/logo_r.png).
 class BrandMark extends StatelessWidget {
   final double markHeight;
   final bool onDark;
@@ -164,7 +164,7 @@ class BrandMark extends StatelessWidget {
             height: markHeight, filterQuality: FilterQuality.high),
         SizedBox(height: markHeight * 0.15),
         Text(
-          'RUBI',
+          'RUBY',
           style: TextStyle(
             fontSize: markHeight * 0.26,
             fontWeight: FontWeight.w800,
@@ -179,7 +179,7 @@ class BrandMark extends StatelessWidget {
         ),
         SizedBox(height: markHeight * 0.08),
         Text(
-          'RESIDENCIAS',
+          'INVOICE',
           style: TextStyle(
             fontSize: markHeight * 0.115,
             fontWeight: FontWeight.w500,

@@ -12,6 +12,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///   notice       (String) announcement banner, '' hides it
 ///   min_version  (String) force-update gate, e.g. "0.2.2", '' = off
 ///   features     (Map<String, bool>) overrides: {reports: false, ...}
+///   auto_approve (bool)   new registrations activate themselves without
+///                         waiting for the Admin. Defaults to TRUE while
+///                         the field/doc is missing.
 ///
 /// The admin edits the document from the Firebase Console on their phone;
 /// every installed app picks it up live via snapshots() and caches the
@@ -21,10 +24,12 @@ class RemoteConfig {
   final String notice;
   final String minVersion;
   final Map<String, bool> features;
+  final bool autoApprove;
   const RemoteConfig({
     this.notice = '',
     this.minVersion = '',
     this.features = const {},
+    this.autoApprove = true,
   });
 
   /// Flags default to ON - the admin only lists overrides for features
@@ -36,6 +41,7 @@ class RemoteConfig {
         minVersion: (data['min_version'] ?? '') as String,
         features: ((data['features'] ?? const {}) as Map)
             .map((k, v) => MapEntry(k.toString(), v == true)),
+        autoApprove: (data['auto_approve'] ?? true) == true,
       );
 }
 

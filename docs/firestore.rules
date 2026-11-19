@@ -20,6 +20,19 @@ service cloud.firestore {
                     'registeredDevices', 'updatedAt']);
     }
 
+    // ------------------------------------------------------------------
+    // SELF-SERVE ACTIVATION: the remote `auto_approve` flag (config/app,
+    // docs/REMOTE_CONTROL.md) lets brand-new accounts go live without a
+    // manual admin step. It defaults to ON while the config document or
+    // field is missing; the Admin can turn it off any time by creating
+    // config/app with auto_approve = false.
+    // ------------------------------------------------------------------
+    function isAutoApproveOn() {
+      return !exists(/databases/$(database)/documents/config/app)
+          || get(/databases/$(database)/documents/config/app)
+                .data.get('auto_approve', true) == true;
+    }
+
     // Account record for every shop owner. The owner can read their own
     // account (needed offline for the access check) but can NEVER flip
     // their own status/expiry - that is the whole point of the
@@ -29,8 +42,10 @@ service cloud.firestore {
                          && (request.auth.uid == userId || isAdmin());
       allow create: if request.auth != null
                       && request.auth.uid == userId
-                      && request.resource.data.status == 'pending'
-                      && request.resource.data.maxDevices == 2;
+                      && request.resource.data.maxDevices == 2
+                      && (request.resource.data.status == 'pending'
+                          || (request.resource.data.status == 'active'
+                              && isAutoApproveOn()));
       // Owner may only touch their own PIN hash / profile fields;
       // status, expiryDate, maxDevices and registeredDevices are
       // admin-controlled (plus the automatic device self-registration).
@@ -46,6 +61,15 @@ service cloud.firestore {
                                   .hasOnly(['registeredDevices'])
                             && request.resource.data.registeredDevices.size()
                                   <= request.resource.data.maxDevices)
+                        || (request.auth.uid == userId
+                            // self-activation: the ONLY status change an
+                            // owner may make - pending -> active - and
+                            // only while the remote auto_approve flag is on
+                            && request.resource.data.diff(resource.data).affectedKeys()
+                                  .hasOnly(['status', 'updatedAt'])
+                            && resource.data.status == 'pending'
+                            && request.resource.data.status == 'active'
+                            && isAutoApproveOn())
                       );
       allow delete: if isAdmin();
     }

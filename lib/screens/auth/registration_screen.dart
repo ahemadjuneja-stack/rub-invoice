@@ -7,6 +7,7 @@ import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../../services/access_service.dart';
 import '../../services/pin_service.dart';
+import '../../services/remote_config.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 
@@ -89,7 +90,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         }
       },
       verificationFailed: (FirebaseAuthException e) {
-        _error(e.message ?? 'Verification failed');
+        _error(_friendlyAuthError(e));
       },
       codeSent: (String verificationId, int? resendToken) {
         if (!mounted) return;
@@ -122,9 +123,39 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       await FirebaseAuth.instance.signInWithCredential(cred);
       await _finishRegistration(_phoneC.text.trim());
     } on FirebaseAuthException catch (e) {
-      _error(e.message ?? 'Invalid OTP');
+      _error(_friendlyAuthError(e));
     } catch (e) {
       _error('Could not verify: $e');
+    }
+  }
+
+  /// Firebase's raw messages are developer-speak. These map the common
+  /// phone-auth failures to what the shop owner should actually DO.
+  String _friendlyAuthError(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'operation-not-allowed':
+        return 'Phone sign-in is OFF in the Firebase console. Open Console '
+            '-> Authentication -> Sign-in method -> Phone -> Enable -> '
+            'Save, then try again.';
+      case 'invalid-app-credential':
+        return 'The app fingerprints are missing in the Firebase console. '
+            'Add the SHA-1 / SHA-256 (docs/FIREBASE_SETUP.md) under '
+            'Project settings -> Your apps.';
+      case 'too-many-requests':
+        return 'Too many attempts blocked the request for now. Wait a few '
+            'minutes and try again.';
+      case 'quota-exceeded':
+        return 'The free daily SMS quota is finished. Try again tomorrow.';
+      case 'invalid-phone-number':
+        return 'That mobile number does not look valid.';
+      case 'invalid-verification-code':
+        return 'Wrong OTP. Check the SMS and enter the 6-digit code again.';
+      case 'network-request-failed':
+        return 'No internet connection. Check mobile data or WiFi.';
+      case 'session-expired':
+        return 'The OTP session expired. Go back and request a new OTP.';
+      default:
+        return e.message ?? 'Verification failed (${e.code})';
     }
   }
 
@@ -157,10 +188,13 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     } catch (_) {}
     SyncService.instance.syncSoon();
     if (!mounted) return;
+    final auto = RemoteConfigService.instance.config.value.autoApprove;
     showSnack(
       context,
       SyncService.instance.fbReady
-          ? 'Registered! Waiting for Admin approval'
+          ? (auto
+              ? 'Registered! Ruby Invoice is ready'
+              : 'Registered! Waiting for Admin approval')
           : 'Registered. Ruby Invoice is ready!',
     );
     widget.onDone();

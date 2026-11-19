@@ -9,6 +9,8 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'remote_config.dart';
+
 /// The single source of truth for whether this app instance may be used.
 ///
 /// Every user lives in `users/{userId}` in Firestore with:
@@ -77,7 +79,11 @@ class AccessService {
   // Registration side: create / repair the users/{uid} document.
   // ------------------------------------------------------------------
 
-  /// Creates the user document at registration with status "pending".
+  /// Creates the user document at registration. While the remote
+  /// `auto_approve` flag is ON (the default - see docs/REMOTE_CONTROL.md)
+  /// the account is born "active" so the owner walks straight in; the
+  /// Admin can still kill-switch it later. With the flag OFF it is born
+  /// "pending" and waits for manual admin approval.
   /// If a doc already exists (2nd device / reinstall) the MASTER COPY in
   /// Firestore wins and the local PIN is imported from it, so the same
   /// mobile number works on both devices with the same Quick PIN.
@@ -95,17 +101,19 @@ class AccessService {
     if (snap.exists) {
       // Existing master account - import it (this is a 2nd device).
       final info = AccountInfo.fromMap(uid, snap.data()!);
+      if (info.status == 'pending') await selfActivateIfAllowed();
       await _registerDeviceIfNeeded(info);
       return info;
     }
 
+    final auto = RemoteConfigService.instance.config.value.autoApprove;
     final now = DateTime.now();
     // Default subscription: 365 days, admin can change it any time.
     final info = AccountInfo(
       uid: uid,
       businessName: businessName.trim(),
       phone: phone,
-      status: 'pending',
+      status: auto ? 'active' : 'pending',
       expiryDate: now.add(const Duration(days: 365)),
       maxDevices: 2,
       registeredDevices: [devId],
@@ -115,6 +123,34 @@ class AccessService {
     await doc.set(info.toMap()..['createdAt'] = now.millisecondsSinceEpoch);
     await _cacheAccount(info);
     return info;
+  }
+
+  /// One-shot self-activation: while the remote `auto_approve` flag is
+  /// ON, an account stuck at "pending" (registered on an older app
+  /// version, or before the flag was reviewed) promotes itself to
+  /// "active". The Firestore rules allow exactly this transition and
+  /// nothing else, so this stays harmless once the flag is turned off.
+  /// Returns true when the document is (now) active.
+  Future<bool> selfActivateIfAllowed() async {
+    if (!fbReady) return false;
+    if (!RemoteConfigService.instance.config.value.autoApprove) return false;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    try {
+      final doc = FirebaseFirestore.instance.collection('users').doc(user.uid);
+      final snap = await doc.get();
+      if (!snap.exists) return false;
+      if ((snap.data()?['status'] ?? '') != 'pending') return true;
+      await doc.update({
+        'status': 'active',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      await verifyOnce(); // re-read + re-evaluate (also refreshes cache)
+      return true;
+    } catch (_) {
+      // Offline / rules denied / flag off on the server - stay pending.
+      return false;
+    }
   }
 
   Future<void> _registerDeviceIfNeeded(AccountInfo info) async {
