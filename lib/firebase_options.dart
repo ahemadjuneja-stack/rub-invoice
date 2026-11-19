@@ -1,18 +1,18 @@
 import 'package:firebase_core/firebase_core.dart';
 
-/// STUB CONFIG - REPLACE THIS FILE (see docs/FIREBASE_SETUP.md).
+/// Real Firebase config for the Ruby Invoice Android app.
 ///
-/// Run `flutterfire configure` after creating your Firebase project and
-/// this file will be regenerated with your real keys. Until then the app
-/// runs 100% offline and sync stays disabled (detected via the PASTE_
-/// markers below, so no crash and no wasted network calls).
+/// Generated from android/app/google-services.json (Firebase project
+/// `ruby-invoice-c17bd`, Android package `com.rubyinvoice.ruby_invoice`).
+/// Because the keys are real, `firebaseConfigured` is true and the app
+/// connects to Firestore sync on startup.
 class DefaultFirebaseOptions {
   static const FirebaseOptions current = FirebaseOptions(
-    apiKey: 'PASTE_ANDROID_API_KEY',
-    appId: 'PASTE_ANDROID_APP_ID',
-    messagingSenderId: 'PASTE_SENDER_ID',
-    projectId: 'PASTE_PROJECT_ID',
-    storageBucket: 'PASTE_STORAGE_BUCKET',
+    apiKey: 'AIzaSyCBPMZrOqIN8mO3lEWknvK_LnuzakpeWjU',
+    appId: '1:972758775225:android:73cf3536b6d2a33e54f268',
+    messagingSenderId: '972758775225',
+    projectId: 'ruby-invoice-c17bd',
+    storageBucket: 'ruby-invoice-c17bd.firebasestorage.app',
   );
 }
 
