@@ -6,7 +6,10 @@ plugins {
 
 android {
     namespace = "com.rubyinvoice.ruby_invoice"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned explicitly (matches flutter.compileSdkVersion of the pinned
+    // CI Flutter SDK): protects the AAR metadata checks from drift when
+    // a plugin resolves with a dynamic compileSdk.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

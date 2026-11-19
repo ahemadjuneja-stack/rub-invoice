@@ -51,6 +51,14 @@ dependencies:
   # Purchase bill photo (camera / gallery)
   image_picker: ^1.1.2
 
+  # file_picker 8.3.7 pins its own compileSdk 34, while lifecycle 2.0.35
+  # (dynamic compileSdk) generates AAR metadata that requires consumers
+  # to compile against 36 - that pairing fails :file_picker's AAR
+  # metadata check nondeterministically on CI. 2.0.24 hard-codes
+  # compileSdk 34, so every AAR check passes deterministically.
+dependency_overrides:
+  flutter_plugin_android_lifecycle: 2.0.24
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

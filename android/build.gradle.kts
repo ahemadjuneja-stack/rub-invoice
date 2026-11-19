@@ -44,6 +44,18 @@ subprojects {
     } else {
         afterEvaluate { alignCompileSdkTo(36) }
     }
+    // AGP 9: some vendor plugins (file_picker 8.x) register through
+    // com.android.internal.library; attach the alignment at plugin
+    // application time as well so the hook can never miss them.
+    listOf(
+        "com.android.library",
+        "com.android.internal.library",
+        "com.android.application",
+    ).forEach { pluginId ->
+        plugins.withId(pluginId) {
+            afterEvaluate { alignCompileSdkTo(36) }
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {
