@@ -280,17 +280,17 @@ class _DispatchSheetState extends State<_DispatchSheet> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Expanded(_modeChip('transport', Icons.local_shipping_outlined, 'TRANSPORT')),
+                  Expanded(child: _modeChip('transport', Icons.local_shipping_outlined, 'TRANSPORT')),
                   const SizedBox(width: 8),
-                  Expanded(_modeChip('inhand', Icons.directions_walk_outlined, 'IN HAND')),
+                  Expanded(child: _modeChip('inhand', Icons.directions_walk_outlined, 'IN HAND')),
                 ],
               ),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Expanded(_modeChip('courier', Icons.markunread_mailbox_outlined, 'COURIER')),
+                  Expanded(child: _modeChip('courier', Icons.markunread_mailbox_outlined, 'COURIER')),
                   const SizedBox(width: 8),
-                  Expanded(_modeChip('pending', Icons.schedule_outlined, 'PENDING')),
+                  Expanded(child: _modeChip('pending', Icons.schedule_outlined, 'PENDING')),
                 ],
               ),
               // Billty photo: only for transport - or whenever a photo

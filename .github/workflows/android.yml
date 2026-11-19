@@ -44,7 +44,34 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        run: |
+          set -o pipefail
+          flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee /tmp/analyze.log
+
+      # Analyze failures leave no build log behind - publish the analyzer
+      # output to the ci-logs branch so it is readable via
+      # raw.githubusercontent.com without any API rate limits.
+      - name: Summarize analyze failure
+        if: failure()
+        run: |
+          if [ -f /tmp/build_full.log ]; then
+            echo 'Build log exists - failure happened after analyze, skipping.'; exit 0
+          fi
+          if [ -f /tmp/analyze.log ]; then
+            {
+              echo '## Analyze failure'
+              tail -60 /tmp/analyze.log
+            } >> "$GITHUB_STEP_SUMMARY" || true
+            mkdir -p /tmp/logrepo && cd /tmp/logrepo
+            git init -q
+            git config user.email "ci@rubyinvoice.local" && git config user.name "CI Bot"
+            git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+            cp /tmp/analyze.log analyze.log
+            git add analyze.log
+            git commit -qm "CI analyze log for ${{ github.sha }}"
+            git branch -M ci-logs
+            git push -f origin ci-logs || true
+          fi
 
       # The Flutter-gradle plugin requires the NDK matching flutter.ndkVersion
       # (28.2.13676358 for Flutter 3.50.0). Runners do not always ship that
@@ -84,6 +111,9 @@ jobs:
       - name: Summarize build failure
         if: failure()
         run: |
+          if [ ! -f /tmp/build_full.log ]; then
+            echo 'No build log (build step never started).'; exit 0
+          fi
           {
             echo '## Build failure (log tail)'
             grep -B4 -A25 -E "What went wrong|FAILURE: Build failed|Caused by|error:" /tmp/build_full.log | tail -150
