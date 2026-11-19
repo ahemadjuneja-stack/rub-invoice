@@ -1,108 +1,126 @@
-# Firebase Setup (sync + Google login)
+# Firebase Setup (login, sync, bilty photos, Ruby Key admin)
 
-Ruby Invoice is **offline-first**: it works 100% without Firebase. Completing
-this setup switches on (a) Google (Gmail) sign-in registration and (b)
-automatic sync, so the same Google account used on two devices sees the same
-data.
+Ruby Invoice is **offline-first**: it works 100% without Firebase.
+Completing this setup switches on:
 
-> Login is **Google-based, no SMS**. Phone/OTP login was removed because
-> SMS delivery in India is unreliable (delays, carrier filtering, daily
-> quota). Google sign-in is instant and free.
+1. **Google login** (Continue with Google, no SMS/OTP anywhere)
+2. **Cloud sync** of customers, bills, ledger, inventory + **photos**
+3. **The 7-day trial / subscription access system**
+4. **Ruby Key** - the web admin panel (block / extend / reset devices)
 
-> **LOGIN IS CURRENTLY DISABLED** during the build phase:
-> `lib/app.dart` has `kLoginEnabled = false`, which opens the app straight
-> to the HomeScreen (no sign-in, no PIN, no admin gate). To re-enable the
-> full login flow later, set that constant back to `true` - no other code
-> change is needed. This document describes the Google sign-in setup to
-> complete when login comes back.
+> The Firebase project `ruby-invoice-c17bd` is ALREADY created and the
+> Android app already ships with `google-services.json`. The steps below
+> only add what is new in v0.2.16.
 
-## 1. Create the Firebase project
+## 1. Paste the new security rules (REQUIRED)
 
-1. Go to <https://console.firebase.google.com> and click **Add project**.
-2. Name it e.g. `ruby-invoice` and continue (Analytics optional).
+The rules moved to the repo ROOT and now protect the new features:
 
-## 2. Install the FlutterFire CLI (one time)
+* [`firestore.rules`](../firestore.rules) - users / shops / subscriptions
+* [`storage.rules`](../storage.rules) - photos with a 300 KB upload cap
 
-```bash
-dart pub global activate flutterfire_cli
-```
+**Firestore:** console -> Firestore Database -> **Rules** -> paste the
+full contents of `firestore.rules` -> **Publish**.
 
-## 3. Link the app and generate real config
+**Storage:** you must enable Storage first (console -> **Storage** ->
+Get started -> production mode, region `asia-south1`). Then Storage ->
+**Rules** -> paste `storage.rules` -> **Publish**.
 
-From the `ruby_invoice` project folder:
+The admin is whitelisted by Gmail (`Ahemadjuneja@gmail.com`) inside the
+rules themselves - no UID pasting needed. To change the admin Gmail
+later, edit the email in both rule files.
 
-```bash
-flutterfire configure
-```
+## 2. Google sign-in check (one time)
 
-- Select the `ruby-invoice` project.
-- Select platforms: **android** (add ios/web later if you want).
-- The CLI writes **`lib/firebase_options.dart`** with your real keys and
-  registers the Android app (package id: `com.rubyinvoice.ruby_invoice`).
-  This replaces the stub file in the repo - nothing else to change.
+1. Authentication -> **Sign-in method** -> **Google** must be **Enabled**.
+2. Project settings -> General -> Your apps -> Android app ->
+   the release **SHA-1 / SHA-256** fingerprints are added (already done
+   if Google login worked before).
 
-Commit the new `lib/firebase_options.dart` and push. The app now detects
-"Firebase configured" on next launch.
-
-## 4. Enable Google sign-in (no SMS anywhere)
-
-1. Firebase console -> **Authentication** -> **Sign-in method** ->
-   **Add a new provider** -> **Google** -> **Enable** -> choose your own
-   Gmail as the project support email -> **Save**.
-2. Add the app fingerprints (REQUIRED for Google sign-in):
-   Project settings (gear) -> **General** -> **Your apps** -> the Android
-   app (`com.rubyinvoice.ruby_invoice`) -> **Add fingerprint** -> paste
-   the release **SHA-1**, save; again with the **SHA-256**.
-3. On the same page click **Download google-services.json** and commit
-   the refreshed file to `android/app/google-services.json` in the repo
-   (GitHub web: `android/app` folder -> Add file -> Upload files ->
-   commit). The refreshed file contains the OAuth client Google sign-in
-   needs - without it sign-in fails with error code 10.
-
-## 5. Create the Firestore database
-
-Firebase console -> **Firestore Database** -> **Create database** ->
-production mode -> pick a region close to you (e.g. `asia-south1`).
-
-Then open the **Rules** tab and paste the contents of
-[`docs/firestore.rules`](firestore.rules):
+## 3. How login works now (v0.2.16)
 
 ```
-match /shops/{shopId}/{document=**} {
-  allow read, write: if request.auth != null
-                     && request.auth.uid == shopId;
+Login screen (logo + Continue with Google)
+   -> users/{uid} exists?  -> straight into the app (PIN -> Home)
+   -> users/{uid} MISSING? -> Business Registration screen
+        Shop name*, Owner name*, Mobile (10 digits)*,
+        Email (read-only from Google), City*, Address*, GST (optional)
+        + 4-digit Quick PIN
+   -> account created: status "active", plan "trial",
+      trialStartDate: now, trialEndDate: now + 7 days,
+      maxDevices: 2, activeDevices: [this phone]
+   -> straight to the dashboard - NO waiting screen
+```
+
+The live `users/{uid}` listener locks the app INSTANTLY when the Admin
+blocks the account ("Account Suspended" + WhatsApp/Email support
+button), when validity passes ("Subscription Expired" + Renew button),
+or when a 3rd device signs in ("Device Limit Reached" - the owner can
+remove one of the old devices right on that screen).
+
+## 4. Cloud sync + bilty photos
+
+* Data: `shops/{uid}/customers|products|bills|payments|purchases|bill_dispatch`
+  - SQLite is the source of truth; push every 2 minutes + on every save;
+  pull with last-write-wins merge; deletes are tombstones.
+* **Photos** (billty receipts, payment proofs, purchase bills):
+  `shops/{uid}/photos/{table}_{rowId}.jpg` in Firebase Storage,
+  **compressed to <= 300 KB on the phone before upload** (the Storage
+  rules reject anything bigger). The other device downloads any photo
+  it is missing automatically.
+* **45-day billty rule:** billty photos delete themselves after 45 days
+  on every device, and expired cloud copies are cleaned from Storage on
+  the next sync of any device. Payment proofs / purchase photos have no
+  expiry.
+
+## 5. Ruby Key - admin panel (web PWA)
+
+Lives in [`/ruby-key-admin`](../ruby-key-admin/README.md). Setup:
+
+1. **Register a Web app**: Project settings -> Your apps -> **Web** `</>`
+   -> nickname `Ruby Key` -> copy `appId` into
+   `ruby-key-admin/firebase-config.js` (replace `PASTE_WEB_APP_ID_HERE`).
+2. **Authorized domains**: Authentication -> Settings -> Authorized
+   domains -> add `ahemadjuneja-stack.github.io`.
+3. **Publish the panel**: repo **Settings -> Pages** -> Source:
+   **GitHub Actions**. The workflow `admin-pages.yml` deploys
+   `ruby-key-admin/` on every push to main. Open:
+   `https://ahemadjuneja-stack.github.io/rub-invoice/`
+4. Chrome on your phone -> open the URL -> menu -> **Add to Home
+   screen** -> install as "Ruby Key".
+
+What it does: live cards (Total / Trials / Paid / Expired / Blocked),
+search, per-user Block-Unblock (instant kill switch), Extend validity
+(+30 days / +1 year / custom date - writes `subscriptionEndDate` and a
+`subscriptions` row), device list with model names + reset, WhatsApp /
+Call buttons.
+
+## 6. subscriptions schema (Razorpay-ready)
+
+```
+subscriptions/{autoId} {
+  userId:            "<users/{uid}>",
+  shopName:          "...",
+  planId:            "monthly" | "yearly" | "manual",
+  amount:            9900,            // paise
+  currency:          "INR",
+  razorpayOrderId:   "order_...",     // filled by the webhook later
+  razorpayPaymentId: "pay_...",
+  status:            "active" | "expired" | "failed",
+  validUntil:        <Timestamp>,
+  note:              "...",
+  createdAt:         <serverTimestamp>
 }
 ```
 
-This guarantees every shop can only ever touch its own data.
-
-## 6. How sync works (design notes)
-
-Data model - one document tree per shop:
-
-```
-shops/{uid}/customers/{uuid}
-shops/{uid}/products/{uuid}
-shops/{uid}/bills/{uuid}          <- items embedded as `items: []`
-shops/{uid}/payments/{uuid}
-```
-
-* **Offline-first**: SQLite is the source of truth; the app never blocks
-  on the network.
-* **Push**: rows flagged `dirty = 1` are batch-written to Firestore
-  (up to 400 ops per batch) and the flag clears on success.
-* **Pull**: every 2 minutes, on connectivity regain, after login and
-  after every save, rows with `updated_at > last_sync_ms` are fetched.
-* **Last-write-wins**: a remote row is applied only when its
-  `updated_at` is strictly newer than the local one, so the same bill
-  edited on two devices converges to the newest version.
-* **Deletes** are tombstones (`is_deleted = 1`), so deletions propagate.
-* **Two devices, one shop**: sign in with the SAME Google account on
-  both phones -> same Firebase uid -> same `shops/{uid}` tree -> both
-  apps always show the same data.
+A Razorpay webhook (later) can create the same documents with the
+Admin SDK - no migration needed; the app only ever reads
+`subscriptionEndDate` on the user document.
 
 ## 7. Verify
 
-1. `flutter run` on device A -> register with Gmail, set PIN.
-2. Install on device B -> register with the SAME Google account.
-3. Make a bill on A -> within a few seconds it appears on B.
+1. Open the app -> login screen -> Continue with Google -> register ->
+   straight to billing. 2nd phone: same Gmail -> same data.
+2. Block yourself from Ruby Key -> the phone locks within seconds;
+   Unblock -> it unlocks itself.
+3. Take a billty photo on phone A -> it appears on phone B after sync.

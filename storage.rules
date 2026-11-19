@@ -1,0 +1,47 @@
+rules_version = '2';
+
+// =====================================================================
+// Ruby Invoice - Firebase Storage rules
+//
+// Photos (billty / payment proofs / purchase bills) live under the
+// owner's own prefix:
+//     shops/{uid}/photos/{table}_{rowId}.jpg
+//
+// * Owner: read/write ONLY their own files, only while the account is
+//   active, and uploads are capped at 300 KB (client-side compression
+//   is enforced here too - big uploads are rejected by the rules).
+// * Admin: full access for support / cleanup.
+// =====================================================================
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAdmin() {
+      return request.auth != null
+          && request.auth.token.email != null
+          && request.auth.token.email.lower() == 'ahemadjuneja@gmail.com';
+    }
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function isActiveOwner(uid) {
+      // NOTE: Storage rules cannot call Firestore. The ACTIVE check is
+      // enforced on every Firestore write (see firestore.rules); the
+      // app itself blocks suspended/expired phones before any upload.
+      return isOwner(uid);
+    }
+
+    match /shops/{uid}/{allPaths=**} {
+      allow read: if isActiveOwner(uid) || isAdmin();
+
+      // Upload / overwrite: owner only, images only, max 300 KB
+      // (spec: compress client-side to <= 300 KB).
+      allow create, update: if isActiveOwner(uid)
+          && request.resource.size <= 300 * 1024
+          && request.resource.contentType.matches('image/.*');
+
+      allow delete: if isActiveOwner(uid) || isAdmin();
+    }
+  }
+}

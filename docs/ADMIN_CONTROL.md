@@ -57,25 +57,18 @@ The app unlocks itself within seconds - no reinstall, no app update.
 
 ## One-time setup
 
-1. **Finish the Firebase setup first** (`docs/FIREBASE_SETUP.md`):
-   `flutterfire configure`, enable Phone sign-in, create Firestore.
-   Until this is done, no UID exists anywhere.
-2. **Register once in your own app**: open Ruby Invoice -> Register ->
-   enter your mobile number -> verify the OTP -> business name + PIN.
-   This creates your account in Firebase.
-3. **Copy your UID**: Firebase Console -> **Authentication** -> **Users**
-   tab -> find your phone number in the list -> copy the value in the
-   **User UID** column (a long string like `xK9dQmT2SfYr5pAbC1vZ...`).
-4. **Paste it into the rules**: Firebase Console -> **Firestore
-   Database** -> **Rules** tab. In the pasted contents of
-   `docs/firestore.rules`, replace the placeholder
-   `PASTE_ADMIN_UID_HERE` with your UID so the line reads:
-   `&& request.auth.uid == 'xK9dQmT2SfYr5pAbC1vZ...'` (keep the quotes).
-   Click **Publish**.
-5. **Approve yourself**: Firebase Console -> **Firestore Database** ->
-   **users** collection -> open your document -> edit the `status` field
-   from `"pending"` to `"active"` -> press Update. (Console edits always
-   bypass security rules, so this works immediately.)
+1. **Finish the Firebase setup first** (`docs/FIREBASE_SETUP.md`),
+   including the rules from the repo ROOT (`firestore.rules`).
+   > Since v0.2.16 the admin is whitelisted **by Gmail** inside the
+   > rules (`Ahemadjuneja@gmail.com`) - there is NO UID placeholder to
+   > paste any more. To change the admin email, edit it in both
+   > `firestore.rules` and `storage.rules`.
+2. **The easy way - Ruby Key**: install the admin PWA
+   (`ruby-key-admin/README.md`) and do all daily tasks from your phone
+   with one tap: block / unblock, extend validity, reset devices.
+3. Manual path (Firebase Console -> Firestore -> `users` collection):
+   edit the same fields as the table above - Console edits bypass
+   security rules, so they always apply immediately.
 
 Notes:
 - The UID in the rules lets an *admin-signed-in client* manage accounts.

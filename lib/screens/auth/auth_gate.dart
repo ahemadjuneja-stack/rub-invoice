@@ -9,13 +9,16 @@ import '../../services/sync_service.dart';
 import '../home/home_screen.dart';
 import '../lock/access_locked_screen.dart';
 import '../lock/pending_approval_screen.dart';
+import 'login_screen.dart';
 import 'pin_lock_screen.dart';
 import 'registration_screen.dart';
 
 /// Decides what the user sees first. Two regimes:
 ///
 /// FIREBASE MODE (configured):
-///   1. not signed in            -> RegistrationScreen (mobile + OTP)
+///   1. not signed in            -> LoginScreen (Continue with Google);
+///                                  a NEW Gmail opens the Business
+///                                  Registration screen immediately
 ///   2. signed in, status pending-> PendingApprovalScreen (admin must approve)
 ///   3. signed in, blocked/expired/deviceLimit -> AccessLockedScreen
 ///   4. signed in, allowed       -> Quick PIN unlock -> HomeScreen
@@ -140,8 +143,11 @@ class _AuthGateState extends State<AuthGate> {
     // emitted yet we keep the splash up - never flash registration.
     if (!fbSignedIn && !_authChecked) return _splash(restoring: true);
     if (!fbSignedIn) {
-      // Firebase configured but genuinely signed out.
-      return RegistrationScreen(onDone: _load);
+      // Firebase configured but genuinely signed out -> STEP 1:
+      // the clean login screen (logo + Continue with Google). It runs
+      // the account check itself: existing Gmail goes straight in,
+      // a NEW Gmail opens the Business Registration screen (STEP 2).
+      return const LoginScreen();
     }
 
     // ---------- FIREBASE MODE: the admin gate ----------
@@ -149,7 +155,7 @@ class _AuthGateState extends State<AuthGate> {
       case AccessState.checking:
         return _splash();
       case AccessState.signedOut:
-        return RegistrationScreen(onDone: _load);
+        return const LoginScreen();
       case AccessState.pending:
         return const PendingApprovalScreen();
       case AccessState.blocked:

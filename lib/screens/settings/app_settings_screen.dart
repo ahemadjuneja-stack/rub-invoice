@@ -7,7 +7,9 @@ import '../../services/package_info_helper.dart';
 import '../../services/update_service.dart';
 import '../../widgets/widgets.dart';
 import '../backup/backup_screen.dart';
-import '../settings/subscription_screen.dart';
+import '../auth/legal_screen.dart';
+import 'business_profile_screen.dart';
+import 'subscription_screen.dart';
 import '../sync/sync_status_screen.dart';
 
 /// One place for everything app-related: subscription, cloud sync,
@@ -42,13 +44,60 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
+          SectionHeader('Business Profile'),
+          const SizedBox(height: 6),
+          _card(ListTile(
+            dense: true,
+            leading: const Icon(Icons.store_outlined, color: Ruby.ruby, size: 20),
+            title: const Text('Business Profile',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Ruby.ink)),
+            subtitle: const Text('Shop name, owner, mobile, city, GST, logo & signature',
+                style: TextStyle(fontSize: 12, color: Ruby.muted)),
+            trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
+            onTap: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const BusinessProfileScreen()));
+            },
+          )),
+          const SizedBox(height: 16),
+          SectionHeader('Legal'),
+          const SizedBox(height: 6),
+          _card(Column(
+            children: [
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.privacy_tip_outlined, color: Ruby.ruby, size: 20),
+                title: const Text('Privacy Policy',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Ruby.ink)),
+                subtitle: const Text('What data Ruby Invoice stores and why',
+                    style: TextStyle(fontSize: 12, color: Ruby.muted)),
+                trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
+                onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const LegalScreen(doc: LegalDoc.privacy)));
+                },
+              ),
+              const Divider(height: 1, indent: 16, endIndent: 16),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.description_outlined, color: Ruby.ruby, size: 20),
+                title: const Text('Terms & Conditions',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Ruby.ink)),
+                subtitle: const Text('Trial, subscription and fair-use rules',
+                    style: TextStyle(fontSize: 12, color: Ruby.muted)),
+                trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
+                onTap: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const LegalScreen(doc: LegalDoc.terms)));
+                },
+              ),
+            ],
+          )),
+          const SizedBox(height: 16),
           SectionHeader('Subscription'),
           const SizedBox(height: 6),
           _card(ListTile(
             leading: const Icon(Icons.workspace_premium_outlined, color: Ruby.ruby, size: 22),
             title: const Text('Subscription',
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Ruby.ink)),
-            subtitle: const Text('1 year free for new users - plans coming soon',
+            subtitle: const Text('7-day free trial - online plans coming soon',
                 style: TextStyle(fontSize: 12, color: Ruby.muted)),
             trailing: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),

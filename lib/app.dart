@@ -4,15 +4,11 @@ import 'core/theme.dart';
 import 'screens/auth/auth_gate.dart';
 import 'screens/home/home_screen.dart';
 
-/// LOGIN IS CURRENTLY DISABLED (build phase).
-///
-/// When [kLoginEnabled] is false the app opens straight to the
-/// HomeScreen: no Google sign-in, no registration screen, no PIN lock,
-/// no admin approval gate. Every login screen and service stays in the
-/// repo untouched - flip this single constant back to `true` to restore
-/// the complete login flow (AuthGate then decides between registration,
-/// pending approval, locked and PIN screens as before).
-const bool kLoginEnabled = false;
+/// LOGIN IS ENABLED: Google sign-in (no SMS) -> account check ->
+/// Business Registration for NEW Gmails -> 7-day trial -> Quick PIN ->
+/// Home. The whole flow lives in AuthGate; set this to false only to
+/// build/test the app without any login screens.
+const bool kLoginEnabled = true;
 
 class RubyInvoiceApp extends StatelessWidget {
   const RubyInvoiceApp({super.key});

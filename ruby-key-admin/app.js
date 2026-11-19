@@ -1,0 +1,402 @@
+// Ruby Key - the admin panel for Ruby Invoice.
+// Dark, mobile-first PWA. Reads/manages ONLY the `users` and
+// `subscriptions` collections - never the private shops/{uid} data.
+//
+// Security:
+//   * Google sign-in only (no sign-up).
+//   * window.RUBY_KEY_ADMIN_EMAIL whitelist - any other Gmail is signed
+//     out instantly with "Unauthorized Access" (also enforced by the
+//     Firestore security rules, so the UI check is just the first gate).
+
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut,
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import {
+  getFirestore, collection, onSnapshot, doc, updateDoc, addDoc,
+  serverTimestamp, Timestamp,
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+const cfg = window.RUBY_FIREBASE_CONFIG || {};
+const ADMIN_EMAIL = String(window.RUBY_KEY_ADMIN_EMAIL || '').toLowerCase();
+const appEl = document.getElementById('app');
+
+const app = initializeApp(cfg);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// ---------------------------------------------------------------- state
+let users = [];          // live snapshot of the users collection
+let adminUser = null;    // signed-in Google account
+let adminOk = false;     // passed the whitelist
+let unsubUsers = null;   // Firestore listener
+let searchTerm = '';
+let openIds = new Set(); // expanded user cards
+
+// ---------------------------------------------------------------- utils
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+function toast(msg, isErr = false) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.toggle('err', isErr);
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function toDate(v) {
+  if (!v) return null;
+  if (v.toDate) return v.toDate();           // Firestore Timestamp
+  if (typeof v === 'number') return new Date(v);
+  if (typeof v === 'string') { const d = new Date(v); return isNaN(d) ? null : d; }
+  return null;
+}
+const fmtDate = (d) => d
+  ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+  : '-';
+
+function effectiveEnd(u) {
+  return toDate(u.subscriptionEndDate) ||
+    (u.plan === 'trial' ? toDate(u.trialEndDate) : null) ||
+    toDate(u.expiryDate);
+}
+
+function daysLeft(u) {
+  const end = effectiveEnd(u);
+  if (!end) return null;
+  return Math.ceil((end.getTime() - Date.now()) / 86400000);
+}
+
+function userTag(u) {
+  if (u.status === 'blocked') return ['blocked', 'BLOCKED'];
+  if (u.status === 'pending') return ['pending', 'PENDING'];
+  const dl = daysLeft(u);
+  if (dl !== null && dl < 0) return ['expired', 'EXPIRED'];
+  if (u.plan === 'paid' || toDate(u.subscriptionEndDate)) return ['paid', 'PAID'];
+  if (u.plan === 'trial') return ['trial', `TRIAL ${Math.max(0, dl ?? 0)}D`];
+  return ['legacy', 'ACTIVE'];
+}
+
+function deviceCount(u) {
+  const n = Array.isArray(u.registeredDevices) ? u.registeredDevices.length : 0;
+  const max = Number(u.maxDevices ?? 2) || 2;
+  return `${n}/${max}`;
+}
+
+const waLink = (mobile) => {
+  let m = String(mobile || '').replace(/\D/g, '');
+  if (m.length === 10) m = '91' + m;
+  return m.length >= 11 ? `https://wa.me/${m}` : null;
+};
+const telLink = (mobile) => {
+  const m = String(mobile || '').replace(/\D/g, '');
+  return m.length >= 10 ? `tel:+${m}` : null;
+};
+
+// ---------------------------------------------------------------- views
+function renderLogin() {
+  appEl.innerHTML = `
+    <div class="center">
+      <div class="boot-logo">R</div>
+      <div class="big">Ruby Key</div>
+      <div class="small">Admin panel for Ruby Invoice - users, trials, subscriptions and devices.</div>
+      <button class="google-btn" id="loginBtn">
+        <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.8-6.8C35.6 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.2C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.2C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.6l-7.7-6c-2.1 1.4-4.7 2.3-7.5 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.2C6.5 42.6 14.6 48 24 48z"/></svg>
+        Continue with Google
+      </button>
+      <div class="small" style="font-size:11px">Only the owner's Gmail can open Ruby Key.</div>
+    </div>`;
+  document.getElementById('loginBtn').onclick = doLogin;
+}
+
+function renderUnauthorized(email) {
+  appEl.innerHTML = `
+    <div class="center">
+      <div class="boot-logo" style="background:#3a2026">!</div>
+      <div class="big">Unauthorized Access</div>
+      <div class="small">${esc(email)} is not the admin Gmail.<br/>For security you have been signed out.</div>
+      <button class="btn" id="againBtn">Back to login</button>
+    </div>`;
+  document.getElementById('againBtn').onclick = () => renderLogin();
+}
+
+function renderDashboard() {
+  appEl.innerHTML = `
+    <header class="topbar">
+      <div class="logo">R</div>
+      <div class="titles">
+        <div class="t1">RUBY KEY</div>
+        <div class="t2"><span class="live-dot"></span>Live - real-time</div>
+      </div>
+      <div class="chip-admin" id="adminChip"></div>
+      <button class="btn-ghost" id="outBtn">Logout</button>
+    </header>
+    <div class="wrap">
+      <section class="stats" id="stats"></section>
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#647182" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <input id="search" type="search" placeholder="Search shop, owner, mobile, city, email..." autocomplete="off" />
+      </div>
+      <div id="userList"></div>
+    </div>`;
+  document.getElementById('adminChip').textContent = adminUser.email;
+  document.getElementById('outBtn').onclick = async () => {
+    if (unsubUsers) { unsubUsers(); unsubUsers = null; }
+    await signOut(auth);
+  };
+  const s = document.getElementById('search');
+  s.addEventListener('input', () => { searchTerm = s.value.trim().toLowerCase(); paintUsers(); });
+  paintStats();
+  paintUsers();
+}
+
+function paintStats() {
+  const el = document.getElementById('stats');
+  if (!el) return;
+  let trials = 0, paid = 0, expired = 0, blocked = 0;
+  for (const u of users) {
+    const [tag] = userTag(u);
+    if (tag === 'trial') trials++;
+    else if (tag === 'paid') paid++;
+    else if (tag === 'expired') expired++;
+    else if (tag === 'blocked') blocked++;
+  }
+  el.innerHTML = `
+    <div class="stat"><div class="n">${users.length}</div><div class="l">Total Users</div></div>
+    <div class="stat amber"><div class="n">${trials}</div><div class="l">Active Trials</div></div>
+    <div class="stat green"><div class="n">${paid}</div><div class="l">Paid Subs</div></div>
+    <div class="stat"><div class="n" style="color:#ff8a8f">${expired}</div><div class="l">Expired</div></div>
+    <div class="stat"><div class="n" style="color:#ff8a8f">${blocked}</div><div class="l">Blocked</div></div>`;
+}
+
+function matches(u) {
+  if (!searchTerm) return true;
+  const hay = [u.businessName, u.ownerName, u.mobile, u.phone, u.city, u.email]
+    .join(' ').toLowerCase();
+  return hay.includes(searchTerm);
+}
+
+function paintUsers() {
+  const list = document.getElementById('userList');
+  if (!list) return;
+  const rows = users.filter(matches);
+  if (!rows.length) {
+    list.innerHTML = `<div class="empty">${searchTerm ? 'No shop matches the search.' : 'No users yet - new registrations appear here live.'}</div>`;
+    return;
+  }
+  list.innerHTML = rows.map(userCard).join('');
+  rows.forEach((u) => bindCard(u));
+}
+
+function userCard(u) {
+  const [tag, tagLabel] = userTag(u);
+  const id = u._id;
+  const open = openIds.has(id);
+  const wa = waLink(u.mobile || u.phone);
+  const tel = telLink(u.mobile || u.phone);
+  const dl = daysLeft(u);
+  return `
+  <div class="user ${open ? 'open' : ''}" id="uc-${cssId(id)}">
+    <div class="head" data-act="toggle" data-id="${esc(id)}">
+      <div class="u-row1">
+        <div class="u-name">${esc(u.businessName || '(no shop name)')}</div>
+        <div class="tag ${tag}">${tagLabel}</div>
+      </div>
+      <div class="u-sub"><b>${esc(u.ownerName || '-')}</b> &nbsp;|&nbsp; ${esc(u.city || '-')} &nbsp;|&nbsp; ${esc(u.mobile || u.phone || '-')}</div>
+      <div class="pill-row">
+        <div class="pill">${esc(u.email || '')}</div>
+        <div class="pill ${dl !== null && dl < 0 ? 'warn' : 'ok'}">Valid till ${fmtDate(effectiveEnd(u))}</div>
+        <div class="pill">Devices ${deviceCount(u)}</div>
+        <div class="pill">Plan ${esc(u.plan || 'legacy')}</div>
+      </div>
+    </div>
+    <div class="details">
+      <div class="kv"><div class="k">Address</div><div class="v">${esc(u.address || '-')}</div></div>
+      <div class="kv"><div class="k">GST</div><div class="v">${esc(u.gst || '-')}</div></div>
+      <div class="kv"><div class="k">Trial started</div><div class="v">${fmtDate(toDate(u.trialStartDate))}</div></div>
+      <div class="kv"><div class="k">Trial end</div><div class="v">${fmtDate(toDate(u.trialEndDate))}</div></div>
+      <div class="kv"><div class="k">Subscription end</div><div class="v">${fmtDate(toDate(u.subscriptionEndDate))}</div></div>
+      <div class="kv"><div class="k">Registered</div><div class="v">${fmtDate(toDate(u.createdAt))}</div></div>
+      <div class="dev-list" id="dev-${cssId(id)}">
+        ${(u.registeredDevices || []).map((d, i) => `
+          <div class="dev">
+            <span>📱</span>
+            <span class="mdi">Device ${i + 1} - ${esc((u.deviceModels && u.deviceModels[d]) || 'Phone')} (${esc(String(d).slice(-6))})</span>
+            <button class="btn red" data-act="rmdev" data-id="${esc(id)}" data-dev="${esc(d)}">Remove</button>
+          </div>`).join('') || '<div class="dev"><span class="mdi">No devices registered</span></div>'}
+      </div>
+      <div class="extend-row">
+        <button class="btn primary" data-act="ext" data-id="${esc(id)}" data-days="30">+30 days</button>
+        <button class="btn primary" data-act="ext" data-id="${esc(id)}" data-days="365">+1 year</button>
+        <input type="date" id="dt-${cssId(id)}" />
+        <button class="btn" data-act="extd" data-id="${esc(id)}">Extend to date</button>
+      </div>
+    </div>
+    <div class="actions">
+      ${u.status === 'blocked'
+        ? `<button class="btn green" data-act="unblock" data-id="${esc(id)}">Unblock</button>`
+        : `<button class="btn red" data-act="block" data-id="${esc(id)}">Block</button>`}
+      <button class="btn" data-act="resetdev" data-id="${esc(id)}">Reset Devices</button>
+      ${wa ? `<a class="btn wa" href="${wa}" target="_blank" rel="noopener">WhatsApp</a>` : ''}
+      ${tel ? `<a class="btn tel" href="${tel}">Call</a>` : ''}
+    </div>
+  </div>`;
+}
+
+function bindCard(u) {
+  const card = document.getElementById(`uc-${cssId(u._id)}`);
+  if (!card) return;
+  card.querySelectorAll('[data-act]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+      const u2 = users.find((x) => x._id === id);
+      if (!u2) return;
+      if (act === 'toggle') {
+        if (openIds.has(id)) openIds.delete(id); else openIds.add(id);
+        paintUsers();
+      } else if (act === 'block') { blockUser(u2); }
+      else if (act === 'unblock') { unblockUser(u2); }
+      else if (act === 'resetdev') { resetDevices(u2); }
+      else if (act === 'rmdev') { removeDevice(u2, btn.dataset.dev); }
+      else if (act === 'ext') { extendUser(u2, Number(btn.dataset.days)); }
+      else if (act === 'extd') {
+        const v = document.getElementById(`dt-${cssId(id)}`).value;
+        if (!v) { toast('Pick a date first', true); return; }
+        extendUser(u2, null, new Date(v + 'T23:59:59'));
+      }
+    });
+  });
+}
+
+const cssId = (id) => id.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+// ------------------------------------------------------------- actions
+async function blockUser(u) {
+  if (!confirm(`Block "${u.businessName}"?\nThe app locks on their phone within seconds.`)) return;
+  try {
+    await updateDoc(doc(db, 'users', u._id), { status: 'blocked', updatedAt: serverTimestamp() });
+    toast(`${u.businessName} blocked`);
+  } catch (e) { toast('Failed: ' + e.code, true); }
+}
+
+async function unblockUser(u) {
+  if (!confirm(`Unblock "${u.businessName}"?`)) return;
+  try {
+    await updateDoc(doc(db, 'users', u._id), { status: 'active', updatedAt: serverTimestamp() });
+    toast(`${u.businessName} unblocked`);
+  } catch (e) { toast('Failed: ' + e.code, true); }
+}
+
+async function resetDevices(u) {
+  const n = (u.registeredDevices || []).length;
+  if (!n) { toast('This account has no registered devices'); return; }
+  if (!confirm(`Reset devices for "${u.businessName}"?\nAll ${n} registered device(s) are removed; they can sign in again on new phones.`)) return;
+  try {
+    await updateDoc(doc(db, 'users', u._id), { registeredDevices: [], deviceModels: {}, updatedAt: serverTimestamp() });
+    toast('Devices reset');
+  } catch (e) { toast('Failed: ' + e.code, true); }
+}
+
+async function removeDevice(u, devId) {
+  if (!confirm('Remove this one device from the account?')) return;
+  const rest = (u.registeredDevices || []).filter((d) => d !== devId);
+  const models = { ...(u.deviceModels || {}) };
+  delete models[devId];
+  try {
+    await updateDoc(doc(db, 'users', u._id), { registeredDevices: rest, deviceModels: models, updatedAt: serverTimestamp() });
+    toast('Device removed');
+  } catch (e) { toast('Failed: ' + e.code, true); }
+}
+
+async function extendUser(u, days, customDate = null) {
+  const base = (() => {
+    const cur = effectiveEnd(u);
+    if (customDate) return customDate;
+    const from = cur && cur.getTime() > Date.now() ? cur : new Date();
+    return new Date(from.getTime() + days * 86400000);
+  })();
+  const label = customDate
+    ? `Extend "${u.businessName}" until ${fmtDate(base)}?`
+    : `Add ${days} day(s) to "${u.businessName}"?\nNew validity: ${fmtDate(base)}`;
+  if (!confirm(label)) return;
+  const ts = Timestamp.fromDate(base);
+  try {
+    await updateDoc(doc(db, 'users', u._id), {
+      status: 'active',
+      plan: 'paid',
+      subscriptionEndDate: ts,
+      updatedAt: serverTimestamp(),
+    });
+    // subscriptions ledger row - Razorpay-ready schema
+    await addDoc(collection(db, 'subscriptions'), {
+      userId: u._id,
+      shopName: u.businessName || '',
+      planId: 'manual',
+      amount: 0,
+      currency: 'INR',
+      razorpayOrderId: '',
+      razorpayPaymentId: '',
+      status: 'active',
+      validUntil: ts,
+      note: days ? `manual +${days}d (Ruby Key)` : 'manual date (Ruby Key)',
+      createdAt: serverTimestamp(),
+    });
+    toast(`Extended till ${fmtDate(base)}`);
+  } catch (e) { toast('Failed: ' + e.code, true); }
+}
+
+// ---------------------------------------------------------------- login
+async function doLogin() {
+  try {
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  } catch (e) {
+    toast('Google sign-in failed: ' + (e.code || ''), true);
+  }
+}
+
+// ------------------------------------------------------------- wiring
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    adminUser = null; adminOk = false;
+    if (unsubUsers) { unsubUsers(); unsubUsers = null; }
+    renderLogin();
+    return;
+  }
+  const email = String(user.email || '').toLowerCase();
+  if (email !== ADMIN_EMAIL) {
+    // Not the owner's Gmail - sign out immediately (spec).
+    signOut(auth);
+    renderUnauthorized(user.email);
+    return;
+  }
+  adminUser = user; adminOk = true;
+  renderDashboard();
+  listenUsers();
+});
+
+function listenUsers() {
+  if (unsubUsers) unsubUsers();
+  unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+    users = snap.docs.map((d) => ({ _id: d.id, ...d.data() }));
+    users.sort((a, b) => {
+      const ta = toDate(a.createdAt)?.getTime() || 0;
+      const tb = toDate(b.createdAt)?.getTime() || 0;
+      return tb - ta;
+    });
+    paintStats();
+    paintUsers();
+  }, (err) => {
+    toast('Live read blocked by rules: ' + err.code, true);
+  });
+}

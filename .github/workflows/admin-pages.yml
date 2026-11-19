@@ -1,0 +1,43 @@
+name: Deploy Ruby Key (admin PWA)
+
+# Publishes ruby-key-admin/ to GitHub Pages on every push to main that
+# touches it. One-time repo setting: Settings -> Pages -> Source:
+# "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ruby-key-admin/**"
+      - ".github/workflows/admin-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+  contents: read
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ruby-key-admin
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

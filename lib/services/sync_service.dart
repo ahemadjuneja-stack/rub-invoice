@@ -9,6 +9,7 @@ import 'package:sqflite/sqflite.dart';
 import '../data/db.dart';
 import '../data/repo.dart';
 import 'access_service.dart';
+import 'photo_sync_service.dart';
 
 enum SyncStatus { offline, syncing, synced, error }
 
@@ -87,6 +88,15 @@ class SyncService {
       final db = await DB.open();
       await _pushAll(db);
       await _pullAll(db);
+      // Photos (billty / payment proof / purchase bill) are FILES, not
+      // rows - they travel through Firebase Storage, compressed to
+      // <= 300 KB client-side. Best-effort: a photo failure never
+      // blocks or fails the data sync.
+      try {
+        await PhotoSyncService.instance.run(db);
+      } catch (e) {
+        debugPrint('[sync] photo step skipped: $e');
+      }
       status.value = SyncStatus.synced;
       // Spec: verify the access rules on every background sync too
       // (status active / not expired / approved device). The admin

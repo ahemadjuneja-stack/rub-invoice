@@ -90,7 +90,7 @@ class SubscriptionScreen extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Simple plans for every shop. Right now everything is free for you.',
+            'Simple plans for every shop. Your 7-day trial is fully free.',
             style: TextStyle(
               fontSize: 13,
               height: 1.45,
@@ -102,7 +102,7 @@ class SubscriptionScreen extends StatelessWidget {
     );
   }
 
-  // ---------------- free year ----------------
+  // ---------------- free trial ----------------
 
   Widget _freeYearCard() {
     return _whiteCard(
@@ -124,7 +124,7 @@ class SubscriptionScreen extends StatelessWidget {
               const SizedBox(width: 12),
               const Expanded(
                 child: Text(
-                  'You get 1 Year FREE',
+                  'You get 7 Days FREE',
                   style: TextStyle(
                       fontSize: 15.5,
                       fontWeight: FontWeight.w800,
@@ -135,10 +135,10 @@ class SubscriptionScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const Text(
-            'You are a new user, so you are getting a complete 1 year free '
-            'subscription. Every feature - billing, inventory, customer '
-            'ledger, reports, purchase invoices and cloud sync - is free '
-            'for you during this period. No payment is needed today.',
+            'Every new account starts with a complete 7-day free trial. '
+            'All features - billing, inventory, customer ledger, reports, '
+            'purchase invoices, bilty photo sync and 2-device cloud sync - '
+            'are unlocked during the trial. No payment is needed today.',
             style: TextStyle(
                 fontSize: 13, height: 1.55, color: Ruby.muted),
           ),
@@ -155,7 +155,7 @@ class SubscriptionScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'After your free year ends',
+            'After your free trial ends',
             style: TextStyle(
                 fontSize: 15.5,
                 fontWeight: FontWeight.w800,
