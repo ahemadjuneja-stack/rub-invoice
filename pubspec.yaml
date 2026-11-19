@@ -1,7 +1,7 @@
 name: ruby_invoice
 description: "Ruby Invoice - fast offline-first billing, ledger & inventory app with Firebase sync."
 publish_to: "none"
-version: 0.2.4+6
+version: 0.2.5+7
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -23,6 +23,7 @@ dependencies:
 
   # Utilities
   uuid: ^4.5.1
+  google_sign_in: ^6.2.1
   intl: ^0.19.0
   crypto: ^3.0.5
   shared_preferences: ^2.3.3

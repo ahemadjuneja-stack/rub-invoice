@@ -108,9 +108,13 @@ class _PendingApprovalScreenState extends State<PendingApprovalScreen> {
                 ),
                 const SizedBox(height: 8),
                 _infoCard(
-                  icon: Icons.phone_outlined,
-                  label: 'Mobile number',
-                  value: info?.phone ?? '',
+                  icon: Icons.mail_outline,
+                  label: 'Account',
+                  value: (info?.email.isNotEmpty ?? false)
+                      ? info!.email
+                      : (info?.phone.isNotEmpty ?? false)
+                          ? info!.phone
+                          : '(not set)',
                 ),
                 const SizedBox(height: 28),
                 OutlinedButton.icon(

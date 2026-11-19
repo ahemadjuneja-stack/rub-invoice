@@ -84,11 +84,12 @@ class AccessService {
   /// the account is born "active" so the owner walks straight in; the
   /// Admin can still kill-switch it later. With the flag OFF it is born
   /// "pending" and waits for manual admin approval.
-  /// If a doc already exists (2nd device / reinstall) the MASTER COPY in
-  /// Firestore wins and the local PIN is imported from it, so the same
-  /// mobile number works on both devices with the same Quick PIN.
+  /// Login is Google-based (Gmail), no SMS. If a doc already exists
+  /// (2nd device / reinstall) the MASTER COPY in Firestore wins and the
+  /// local PIN is imported from it, so the same account works on both
+  /// devices with the same Quick PIN.
   Future<AccountInfo> registerUser({
-    required String phone,
+    required String email,
     required String businessName,
     required String pinHash,
     required String pinSalt,
@@ -112,7 +113,7 @@ class AccessService {
     final info = AccountInfo(
       uid: uid,
       businessName: businessName.trim(),
-      phone: phone,
+      email: email,
       status: auto ? 'active' : 'pending',
       expiryDate: now.add(const Duration(days: 365)),
       maxDevices: 2,
@@ -270,7 +271,8 @@ class AccessService {
     await _evaluateFromCache();
     if (state.value != AccessState.checking) return;
     final sp = await SharedPreferences.getInstance();
-    final reg = sp.getString('reg_phone') ?? '';
+    final reg =
+        sp.getString('reg_email') ?? sp.getString('reg_phone') ?? '';
     state.value = reg.isEmpty ? AccessState.pending : AccessState.allowed;
   }
 
@@ -304,7 +306,8 @@ enum AccessState {
 class AccountInfo {
   final String uid;
   final String businessName;
-  final String phone;
+  final String email; // Google login account
+  final String phone; // legacy phone-auth accounts, '' otherwise
   final String status; // pending | active | blocked
   final DateTime? expiryDate; // null = no expiry
   final int maxDevices;
@@ -315,7 +318,8 @@ class AccountInfo {
   AccountInfo({
     required this.uid,
     required this.businessName,
-    required this.phone,
+    this.email = '',
+    this.phone = '',
     required this.status,
     required this.expiryDate,
     required this.maxDevices,
@@ -332,6 +336,7 @@ class AccountInfo {
     return AccountInfo(
       uid: uid,
       businessName: (m['businessName'] ?? '') as String,
+      email: (m['email'] ?? '') as String,
       phone: (m['phone'] ?? '') as String,
       status: (m['status'] ?? 'pending') as String,
       expiryDate: expiry,
@@ -360,6 +365,7 @@ class AccountInfo {
 
   Map<String, dynamic> toMap() => {
         'businessName': businessName,
+        'email': email,
         'phone': phone,
         'status': status,
         'expiryDate': expiryDate == null
@@ -374,6 +380,7 @@ class AccountInfo {
   Map<String, dynamic> toCache() => {
         'uid': uid,
         'businessName': businessName,
+        'email': email,
         'phone': phone,
         'status': status,
         'expiryMs': expiryDate?.millisecondsSinceEpoch,
@@ -386,6 +393,7 @@ class AccountInfo {
   factory AccountInfo.fromJson(Map<String, dynamic> j) => AccountInfo(
         uid: (j['uid'] ?? '') as String,
         businessName: (j['businessName'] ?? '') as String,
+        email: (j['email'] ?? '') as String,
         phone: (j['phone'] ?? '') as String,
         status: (j['status'] ?? 'pending') as String,
         expiryDate: j['expiryMs'] == null

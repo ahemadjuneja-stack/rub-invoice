@@ -65,7 +65,10 @@ class _AuthGateState extends State<AuthGate> {
   /// Firebase listeners are bound exactly once (in initState).
   Future<void> _load() async {
     final sp = await SharedPreferences.getInstance();
-    _localRegistered = (sp.getString('reg_phone') ?? '').isNotEmpty;
+    _localRegistered = (sp.getString('reg_email') ??
+            sp.getString('reg_phone') ??
+            '')
+        .isNotEmpty;
     _hasPin = await PinService.instance.hasPin;
     if (mounted) setState(() => _loading = false);
     if (!SyncService.instance.fbReady) {

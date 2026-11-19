@@ -1,8 +1,13 @@
-# Firebase Setup (sync + OTP verification)
+# Firebase Setup (sync + Google login)
 
 Ruby Invoice is **offline-first**: it works 100% without Firebase. Completing
-this setup switches on (a) mobile-number OTP registration and (b) automatic
-sync, so the same phone number used on two devices sees the same data.
+this setup switches on (a) Google (Gmail) sign-in registration and (b)
+automatic sync, so the same Google account used on two devices sees the same
+data.
+
+> Login is **Google-based, no SMS**. Phone/OTP login was removed because
+> SMS delivery in India is unreliable (delays, carrier filtering, daily
+> quota). Google sign-in is instant and free.
 
 ## 1. Create the Firebase project
 
@@ -32,11 +37,20 @@ flutterfire configure
 Commit the new `lib/firebase_options.dart` and push. The app now detects
 "Firebase configured" on next launch.
 
-## 4. Enable Phone authentication
+## 4. Enable Google sign-in (no SMS anywhere)
 
-Firebase console -> **Authentication** -> **Sign-in method** ->
-enable **Phone**. Add your test devices under **Users** -> test phone
-numbers if you want to avoid real SMS while developing.
+1. Firebase console -> **Authentication** -> **Sign-in method** ->
+   **Add a new provider** -> **Google** -> **Enable** -> choose your own
+   Gmail as the project support email -> **Save**.
+2. Add the app fingerprints (REQUIRED for Google sign-in):
+   Project settings (gear) -> **General** -> **Your apps** -> the Android
+   app (`com.rubyinvoice.ruby_invoice`) -> **Add fingerprint** -> paste
+   the release **SHA-1**, save; again with the **SHA-256**.
+3. On the same page click **Download google-services.json** and commit
+   the refreshed file to `android/app/google-services.json` in the repo
+   (GitHub web: `android/app` folder -> Add file -> Upload files ->
+   commit). The refreshed file contains the OAuth client Google sign-in
+   needs - without it sign-in fails with error code 10.
 
 ## 5. Create the Firestore database
 
@@ -76,12 +90,12 @@ shops/{uid}/payments/{uuid}
   `updated_at` is strictly newer than the local one, so the same bill
   edited on two devices converges to the newest version.
 * **Deletes** are tombstones (`is_deleted = 1`), so deletions propagate.
-* **Two devices, one shop**: log in with the SAME mobile number on both
-  phones -> same Firebase uid -> same `shops/{uid}` tree -> both apps
-  always show the same data.
+* **Two devices, one shop**: sign in with the SAME Google account on
+  both phones -> same Firebase uid -> same `shops/{uid}` tree -> both
+  apps always show the same data.
 
 ## 7. Verify
 
-1. `flutter run` on device A -> register with OTP, set PIN.
-2. Install on device B -> register with the SAME number.
+1. `flutter run` on device A -> register with Gmail, set PIN.
+2. Install on device B -> register with the SAME Google account.
 3. Make a bill on A -> within a few seconds it appears on B.

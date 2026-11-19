@@ -24,7 +24,11 @@ class _PinLockScreenState extends State<PinLockScreen> {
   void initState() {
     super.initState();
     SharedPreferences.getInstance().then((sp) {
-      if (mounted) setState(() => _phone = sp.getString('reg_phone') ?? '');
+      if (mounted) {
+        setState(() => _phone = sp.getString('reg_email') ??
+            sp.getString('reg_phone') ??
+            '');
+      }
     });
   }
 

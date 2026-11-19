@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme.dart';
@@ -11,12 +12,12 @@ import '../../services/remote_config.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 
-/// One-time registration: Mobile Number + Business Name + 4-digit Quick PIN.
-/// * Firebase configured -> OTP verifies the number, then the account is
-///   created in Firestore as users/{uid} with status "pending" - it goes
-///   live only after the Admin approves it.
-/// * Firebase NOT configured -> local registration with PIN only; the
-///   number is stored and OTP + admin approval turn on after setup.
+/// One-time registration: Google account + Business Name + 4-digit PIN.
+/// * Firebase configured -> sign in with the phone's Gmail (no SMS at
+///   all - OTP was removed because Indian SMS delivery is unreliable),
+///   then the account is created in Firestore as users/{uid}. While the
+///   remote `auto_approve` flag is ON the account is born active.
+/// * Firebase NOT configured -> local registration with PIN only.
 class RegistrationScreen extends StatefulWidget {
   final VoidCallback onDone;
   const RegistrationScreen({super.key, required this.onDone});
@@ -27,39 +28,27 @@ class RegistrationScreen extends StatefulWidget {
 
 class _RegistrationScreenState extends State<RegistrationScreen> {
   final _businessC = TextEditingController();
-  final _phoneC = TextEditingController();
   final _pinC = TextEditingController();
   final _pin2C = TextEditingController();
-  final _otpC = TextEditingController();
 
   bool get fbReady => SyncService.instance.fbReady;
 
-  String _step = 'details'; // details | otp
   bool _busy = false;
-  String? _verificationId;
-  int? _resendToken;
 
   @override
   void dispose() {
     _businessC.dispose();
-    _phoneC.dispose();
     _pinC.dispose();
     _pin2C.dispose();
-    _otpC.dispose();
     super.dispose();
   }
 
-  Future<void> _submitDetails() async {
+  Future<void> _registerWithGoogle() async {
     final business = _businessC.text.trim();
-    final phone = _phoneC.text.trim();
     final pin = _pinC.text.trim();
     final pin2 = _pin2C.text.trim();
     if (business.isEmpty) {
       showSnack(context, 'Enter your business name', error: true);
-      return;
-    }
-    if (phone.length != 10 || int.tryParse(phone) == null) {
-      showSnack(context, 'Enter a valid 10-digit mobile number', error: true);
       return;
     }
     if (pin.length != 4 || int.tryParse(pin) == null) {
@@ -71,105 +60,64 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       return;
     }
 
-    if (!fbReady) {
-      await _finishRegistration(phone);
-      return;
-    }
-
-    setState(() => _busy = true);
-    await FirebaseAuth.instance.verifyPhoneNumber(
-      phoneNumber: '+91$phone',
-      timeout: const Duration(seconds: 60),
-      forceResendingToken: _resendToken,
-      verificationCompleted: (PhoneAuthCredential cred) async {
-        try {
-          await FirebaseAuth.instance.signInWithCredential(cred);
-          await _finishRegistration(phone);
-        } catch (e) {
-          _error('Auto verification failed: $e');
-        }
-      },
-      verificationFailed: (FirebaseAuthException e) {
-        _error(_friendlyAuthError(e));
-      },
-      codeSent: (String verificationId, int? resendToken) {
-        if (!mounted) return;
-        setState(() {
-          _verificationId = verificationId;
-          _resendToken = resendToken;
-          _step = 'otp';
-          _busy = false;
-        });
-      },
-      codeAutoRetrievalTimeout: (String verificationId) {
-        _verificationId = verificationId;
-      },
-    );
-  }
-
-  Future<void> _verifyOtp() async {
-    final code = _otpC.text.trim();
-    if (code.length < 6) {
-      showSnack(context, 'Enter the 6-digit OTP', error: true);
-      return;
-    }
-    if (_verificationId == null) return;
     setState(() => _busy = true);
     try {
-      final cred = PhoneAuthProvider.credential(
-        verificationId: _verificationId!,
-        smsCode: code,
+      final google = GoogleSignIn();
+      final account = await google.signIn(); // account picker
+      if (account == null) {
+        // user closed the picker - not an error
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
+      final auth = await account.authentication;
+      final cred = GoogleAuthProvider.credential(
+        accessToken: auth.accessToken,
+        idToken: auth.idToken,
       );
-      await FirebaseAuth.instance.signInWithCredential(cred);
-      await _finishRegistration(_phoneC.text.trim());
+      final userCred = await FirebaseAuth.instance.signInWithCredential(cred);
+      final email = userCred.user?.email ?? account.email;
+      await _finishRegistration(email);
+    } on PlatformException catch (e) {
+      _error(_friendlyGoogleError(e));
     } on FirebaseAuthException catch (e) {
-      _error(_friendlyAuthError(e));
+      _error(e.message ?? 'Google sign-in failed (${e.code})');
     } catch (e) {
-      _error('Could not verify: $e');
+      _error('Google sign-in failed: $e');
     }
   }
 
-  /// Firebase's raw messages are developer-speak. These map the common
-  /// phone-auth failures to what the shop owner should actually DO.
-  String _friendlyAuthError(FirebaseAuthException e) {
+  /// google_sign_in raises PlatformException with numeric codes. Map the
+  /// common ones to what the shop owner should actually DO.
+  String _friendlyGoogleError(PlatformException e) {
     switch (e.code) {
-      case 'operation-not-allowed':
-        return 'Phone sign-in is OFF in the Firebase console. Open Console '
-            '-> Authentication -> Sign-in method -> Phone -> Enable -> '
-            'Save, then try again.';
-      case 'invalid-app-credential':
-        return 'The app fingerprints are missing in the Firebase console. '
-            'Add the SHA-1 / SHA-256 (docs/FIREBASE_SETUP.md) under '
-            'Project settings -> Your apps.';
-      case 'too-many-requests':
-        return 'Too many attempts blocked the request for now. Wait a few '
-            'minutes and try again.';
-      case 'quota-exceeded':
-        return 'The free daily SMS quota is finished. Try again tomorrow.';
-      case 'invalid-phone-number':
-        return 'That mobile number does not look valid.';
-      case 'invalid-verification-code':
-        return 'Wrong OTP. Check the SMS and enter the 6-digit code again.';
-      case 'network-request-failed':
+      case '12501':
+        return 'Google sign-in was cancelled. Tap the button and pick '
+            'your Gmail account.';
+      case '10':
+        return 'Setup incomplete: add the app SHA-1 / SHA-256 fingerprints '
+            'in Firebase console (Project settings -> Your apps) and '
+            're-download google-services.json (docs/FIREBASE_SETUP.md).';
+      case '7':
         return 'No internet connection. Check mobile data or WiFi.';
-      case 'session-expired':
-        return 'The OTP session expired. Go back and request a new OTP.';
+      case '8':
+        return 'Google sign-in hit an internal error. Try again in a '
+            'minute.';
       default:
-        return e.message ?? 'Verification failed (${e.code})';
+        return 'Google sign-in failed (${e.code}). Try again.';
     }
   }
 
-  Future<void> _finishRegistration(String phone) async {
+  Future<void> _finishRegistration(String email) async {
     // PIN hash first (salted SHA-256, never the plain PIN).
     await PinService.instance.setPin(_pinC.text.trim());
 
     if (SyncService.instance.fbReady) {
-      // Create / attach the master account: users/{uid} with
-      // status "pending" until the Admin approves it.
+      // Create / attach the master account: users/{uid}. Born "active"
+      // while auto_approve is ON, "pending" otherwise.
       final stored = await PinService.instance.stored;
       try {
         await AccessService.instance.registerUser(
-          phone: '+91$phone',
+          email: email,
           businessName: _businessC.text.trim(),
           pinHash: stored.hash,
           pinSalt: stored.salt,
@@ -182,7 +130,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
     // Remember registration locally + use the business name on bills.
     final sp = await SharedPreferences.getInstance();
-    await sp.setString('reg_phone', phone);
+    await sp.setString('reg_email', email);
     try {
       await Repo.instance.setMeta('shop_name', _businessC.text.trim());
     } catch (_) {}
@@ -219,14 +167,14 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               const BrandMark(markHeight: 88),
               const SizedBox(height: 12),
               Text(
-                _step == 'details'
-                    ? 'Register with your mobile number'
-                    : 'OTP sent to +91 ${_phoneC.text.trim()}',
+                fbReady
+                    ? 'Register with your Gmail account'
+                    : 'Register to start billing',
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 13, color: Ruby.muted),
               ),
               const SizedBox(height: 26),
-              if (_step == 'details') _detailsCard() else _otpCard(),
+              _detailsCard(),
             ],
           ),
         ),
@@ -248,8 +196,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               border: Border.all(color: const Color(0xFFE7D9A8)),
             ),
             child: const Text(
-              'Firebase is not configured yet - OTP verification is off. '
-              'The app will register with your number + PIN only. '
+              'Firebase is not configured yet - Google sign-in is off. '
+              'The app will register with your name + PIN only. '
               'Setup: docs/FIREBASE_SETUP.md',
               style: TextStyle(fontSize: 12, height: 1.45, color: Color(0xFF7A6414)),
             ),
@@ -260,30 +208,6 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           textCapitalization: TextCapitalization.words,
           decoration: const InputDecoration(hintText: 'Business name', isDense: false),
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
-              decoration: BoxDecoration(
-                color: Ruby.fieldBg,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Ruby.line),
-              ),
-              child: const Text('+91', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Ruby.ink)),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: _phoneC,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'\d')), LengthLimitingTextInputFormatter(10)],
-                decoration: const InputDecoration(hintText: 'Mobile number', isDense: false),
-                style: const TextStyle(fontSize: 15),
-              ),
-            ),
-          ],
         ),
         const SizedBox(height: 14),
         TextField(
@@ -304,57 +228,29 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           style: const TextStyle(fontSize: 15, letterSpacing: 6),
         ),
         const SizedBox(height: 24),
-        ElevatedButton(
-          onPressed: _busy ? null : _submitDetails,
-          child: _busy
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : Text(fbReady ? 'Send OTP & Register' : 'Register'),
-        ),
-      ],
-    );
-  }
-
-  Widget _otpCard() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: _otpC,
-          keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'\d')), LengthLimitingTextInputFormatter(6)],
-          textAlign: TextAlign.center,
-          autofocus: true,
-          style: const TextStyle(fontSize: 22, letterSpacing: 10, fontWeight: FontWeight.w700),
-          decoration: const InputDecoration(hintText: '- - - - - -', isDense: false),
-        ),
-        const SizedBox(height: 20),
-        ElevatedButton(
-          onPressed: _busy ? null : _verifyOtp,
-          child: _busy
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Verify OTP'),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TextButton(
-              onPressed: _busy ? null : _submitDetails,
-              child: const Text('Resend OTP'),
-            ),
-            TextButton(
-              onPressed: _busy
-                  ? null
-                  : () {
-                      setState(() {
-                        _step = 'details';
-                        _otpC.clear();
-                      });
-                    },
-              child: const Text('Change number'),
-            ),
-          ],
-        ),
+        if (fbReady)
+          ElevatedButton.icon(
+            onPressed: _busy ? null : _registerWithGoogle,
+            icon: _busy
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.mail_outline, size: 20),
+            label: Text(_busy ? 'Signing in...' : 'Sign in with Google & Register'),
+          )
+        else
+          ElevatedButton(
+            onPressed: _busy ? null : () async => _finishRegistration(''),
+            child: _busy
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Text('Register'),
+          ),
+        if (fbReady) ...[
+          const SizedBox(height: 10),
+          const Text(
+            'No OTP, no SMS - picks your Gmail in one tap.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 11.5, color: Ruby.faint),
+          ),
+        ],
       ],
     );
   }
