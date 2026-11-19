@@ -35,7 +35,7 @@ class Repo {
   Future<int> getPendingDirtyCount() async {
     final db = await _db;
     int n = 0;
-    for (final t in ['customers', 'products', 'bills', 'payments']) {
+    for (final t in ['customers', 'products', 'bills', 'payments', 'purchases']) {
       final r = await db.rawQuery('SELECT COUNT(*) c FROM $t WHERE dirty = 1');
       n += (r.first['c'] as int?) ?? 0;
     }
@@ -187,6 +187,67 @@ class Repo {
     await db.rawUpdate('UPDATE products SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', [_now(), id]);
   }
 
+  // ---------------- purchases (maal kharida) ----------------
+
+  /// The invoice number the NEXT saved purchase will get. Mirrors
+  /// nextBillNo(): MAX + 1 across all rows, deleted ones included, so a
+  /// number is never reused.
+  Future<int> nextPurchaseNo() async {
+    final db = await _db;
+    final rows = await db.rawQuery('SELECT COALESCE(MAX(purchase_no), 0) + 1 AS next FROM purchases');
+    return (rows.first['next'] as int?) ?? 1;
+  }
+
+  /// Saves one purchase invoice. [date] may be back-dated like bills.
+  /// [photoPath] is a local file copied into the app's documents folder
+  /// (picture of the paper bill, clicked or picked from gallery).
+  Future<Purchase> savePurchase({
+    required String supplierName,
+    String supplierPhone = '',
+    required int amountPaise,
+    String note = '',
+    String photoPath = '',
+    DateTime? date,
+  }) async {
+    final db = await _db;
+    final now = _now();
+    final chosen = date ?? DateTime.now();
+    final ms = chosen.millisecondsSinceEpoch;
+
+    final noRows = await db.rawQuery('SELECT COALESCE(MAX(purchase_no), 0) + 1 AS next FROM purchases');
+    final no = (noRows.first['next'] as int?) ?? 1;
+
+    final purchase = Purchase(
+      id: _uuid.v4(),
+      purchaseNo: no,
+      supplierName: supplierName.trim(),
+      supplierPhone: supplierPhone.trim(),
+      amountPaise: amountPaise,
+      note: note.trim(),
+      photoPath: photoPath,
+      purchaseDate: ms,
+      purchaseDay: _dayKey(ms),
+      createdAt: now,
+      updatedAt: now,
+    );
+    await db.insert('purchases', purchase.toMap());
+    return purchase;
+  }
+
+  /// All purchase invoices, newest date first.
+  Future<List<Purchase>> purchases() async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+      'SELECT * FROM purchases WHERE is_deleted = 0 ORDER BY purchase_date DESC, created_at DESC',
+    );
+    return rows.map(Purchase.fromMap).toList();
+  }
+
+  Future<void> deletePurchase(String id) async {
+    final db = await _db;
+    await db.rawUpdate('UPDATE purchases SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', [_now(), id]);
+  }
+
   // ---------------- billing ----------------
 
   /// The invoice number the NEXT saved bill will get (shown in the
@@ -202,6 +263,9 @@ class Repo {
   /// Saves a bill + its items atomically, records "received now" as a
   /// payment, and adjusts stock for tracked products. Exact math:
   /// each line amount = round(qty * ratePaise), total = sum of line amounts.
+  /// [billDate] lets the user back-date / pre-date a bill (Miracle-style);
+  /// the received-now payment inherits the same date so the ledger stays
+  /// in chronological order.
   Future<Bill> saveBill({
     required String customerId,
     required String customerName,
@@ -209,11 +273,14 @@ class Repo {
     int paidNowPaise = 0,
     String note = '',
     String payMode = 'cash',
+    DateTime? billDate,
   }) async {
     final db = await _db;
     final now = _now();
     final billId = _uuid.v4();
-    final dayKey = _dayKey(now);
+    final chosen = billDate ?? DateTime.now();
+    final billMs = chosen.millisecondsSinceEpoch;
+    final dayKey = _dayKey(billMs);
 
     return db.transaction<Bill>((txn) async {
       final noRows = await txn.rawQuery('SELECT COALESCE(MAX(bill_no), 0) + 1 AS next FROM bills');
@@ -229,7 +296,7 @@ class Repo {
         billNo: billNo,
         customerId: customerId,
         customerName: customerName,
-        billDate: now,
+        billDate: billMs,
         billDay: dayKey,
         subtotalPaise: subtotal,
         totalPaise: subtotal,
@@ -266,7 +333,7 @@ class Repo {
           customerId: customerId,
           billId: billId,
           amountPaise: paidNowPaise,
-          payDate: now,
+          payDate: billMs,
           payDay: dayKey,
           mode: payMode,
           note: 'Received with bill #$billNo',

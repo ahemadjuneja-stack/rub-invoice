@@ -379,3 +379,75 @@ class CartLine {
   /// round half-up to the nearest paise. 0% rounding error by design.
   int get amountPaise => Money.lineAmountPaise(qty, ratePaise);
 }
+
+/// One purchase invoice (maal kharida ka bill): what came in, from which
+/// supplier, for how much - plus an optional photo of the paper bill
+/// (clicked with the camera or picked from the gallery) kept on the
+/// device next to the amount, Miracle-style.
+class Purchase {
+  final String id;
+  final int purchaseNo; // serial, like bills
+  final String supplierName;
+  final String supplierPhone;
+  final int amountPaise;
+  final String note; // details: items bought, bill no, etc.
+  final String photoPath; // local absolute path, '' when there is none
+  final int purchaseDate; // epoch ms (the chosen bill date)
+  final String purchaseDay; // "2026-11-19" local day key
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  Purchase({
+    required this.id,
+    required this.purchaseNo,
+    required this.supplierName,
+    this.supplierPhone = '',
+    required this.amountPaise,
+    this.note = '',
+    this.photoPath = '',
+    required this.purchaseDate,
+    required this.purchaseDay,
+    required this.createdAt,
+    required this.updatedAt,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  factory Purchase.fromMap(Map<String, Object?> m) => Purchase(
+        id: m['id'] as String,
+        purchaseNo: (m['purchase_no'] ?? 0) as int,
+        supplierName: (m['supplier_name'] ?? '') as String,
+        supplierPhone: (m['supplier_phone'] ?? '') as String,
+        amountPaise: (m['amount_paise'] ?? 0) as int,
+        note: (m['note'] ?? '') as String,
+        photoPath: (m['photo_path'] ?? '') as String,
+        purchaseDate: (m['purchase_date'] ?? 0) as int,
+        purchaseDay: (m['purchase_day'] ?? '') as String,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'purchase_no': purchaseNo,
+        'supplier_name': supplierName,
+        'supplier_phone': supplierPhone,
+        'amount_paise': amountPaise,
+        'note': note,
+        'photo_path': photoPath,
+        'purchase_date': purchaseDate,
+        'purchase_day': purchaseDay,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
+
+  static Purchase fromSync(Map<String, Object?> m) => Purchase.fromMap({...m, 'dirty': 0});
+}

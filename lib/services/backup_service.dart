@@ -16,12 +16,12 @@ class BackupService {
   BackupService._();
   static final BackupService instance = BackupService._();
 
-  static const _tables = ['payments', 'bill_items', 'bills', 'products', 'customers'];
+  static const _tables = ['payments', 'bill_items', 'bills', 'products', 'customers', 'purchases'];
 
   Future<File> exportToFile() async {
     final db = await DB.open();
     final tables = <String, dynamic>{};
-    for (final t in ['customers', 'products', 'bills', 'bill_items', 'payments']) {
+    for (final t in ['customers', 'products', 'bills', 'bill_items', 'payments', 'purchases']) {
       tables[t] = await db.rawQuery('SELECT * FROM $t');
     }
     final now = DateTime.now();
@@ -63,8 +63,12 @@ class BackupService {
     final db = await DB.open();
     int count = 0;
     await db.transaction((txn) async {
+      // Only wipe tables the backup actually captured, so restoring an
+      // older backup (schema without purchases) never destroys newer data.
       for (final t in _tables) {
-        await txn.delete(t);
+        if (tables.containsKey(t)) {
+          await txn.delete(t);
+        }
       }
       for (final t in _tables.reversed) {
         final rows = (tables[t] as List?) ?? const [];
@@ -75,7 +79,7 @@ class BackupService {
         }
       }
       // Mark everything dirty so the next sync re-uploads the restored data.
-      for (final t in ['customers', 'products', 'bills', 'bill_items', 'payments']) {
+      for (final t in ['customers', 'products', 'bills', 'bill_items', 'payments', 'purchases']) {
         await txn.execute('UPDATE $t SET dirty = 1');
       }
     });

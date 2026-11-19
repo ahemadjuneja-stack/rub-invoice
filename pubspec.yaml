@@ -1,7 +1,7 @@
 name: ruby_invoice
 description: "Ruby Invoice - fast offline-first billing, ledger & inventory app with Firebase sync."
 publish_to: "none"
-version: 0.2.9+11
+version: 0.2.10+12
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -47,6 +47,9 @@ dependencies:
   open_filex: ^4.5.0
   package_info_plus: ^8.1.1
   url_launcher: ^6.3.1
+
+  # Purchase bill photo (camera / gallery)
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:

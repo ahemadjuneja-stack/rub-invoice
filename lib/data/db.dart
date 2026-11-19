@@ -13,7 +13,7 @@ class DB {
     final dir = await getDatabasesPath();
     _handle = await openDatabase(
       p.join(dir, 'ruby_invoice.db'),
-      version: 2,
+      version: 3,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onUpgrade: (db, oldVersion, newVersion) async {
         // v2: customers gained shop_name + address.
@@ -24,6 +24,10 @@ class DB {
           try {
             await db.execute("ALTER TABLE customers ADD COLUMN address TEXT DEFAULT ''");
           } catch (_) {}
+        }
+        // v3: purchase invoices (supplier bills with optional photo).
+        if (oldVersion < 3) {
+          await _createPurchases(db);
         }
       },
       onCreate: (db, version) async {
@@ -109,14 +113,42 @@ class DB {
         ''');
         await db.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT DEFAULT '')");
 
+        await _createPurchases(db);
+
         await db.execute('CREATE INDEX idx_bills_day ON bills (bill_day)');
         await db.execute('CREATE INDEX idx_bills_customer ON bills (customer_id)');
         await db.execute('CREATE INDEX idx_items_bill ON bill_items (bill_id)');
         await db.execute('CREATE INDEX idx_payments_customer ON payments (customer_id)');
         await db.execute('CREATE INDEX idx_customers_name ON customers (name)');
         await db.execute('CREATE INDEX idx_products_name ON products (name)');
+        await db.execute('CREATE INDEX idx_purchases_day ON purchases (purchase_day)');
       },
     );
     return _handle!;
+  }
+
+  /// Purchase invoices table: supplier bills with an optional photo of
+  /// the paper bill. Same sync-ready shape as every other table.
+  static Future<void> _createPurchases(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS purchases (
+        id TEXT PRIMARY KEY,
+        purchase_no INTEGER DEFAULT 0,
+        supplier_name TEXT NOT NULL DEFAULT '',
+        supplier_phone TEXT DEFAULT '',
+        amount_paise INTEGER DEFAULT 0,
+        note TEXT DEFAULT '',
+        photo_path TEXT DEFAULT '',
+        purchase_date INTEGER DEFAULT 0,
+        purchase_day TEXT DEFAULT '',
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    try {
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_purchases_day ON purchases (purchase_day)');
+    } catch (_) {}
   }
 }

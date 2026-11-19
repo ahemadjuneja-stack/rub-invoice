@@ -101,6 +101,12 @@ class Dt {
     return DateTime(n.year, n.month, n.day);
   }
 
+  /// Local midnight of the day containing the given epoch-ms instant.
+  static DateTime dayStartOf(int ms) {
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    return DateTime(d.year, d.month, d.day);
+  }
+
   static String todayKey() => dayKey(DateTime.now());
 
   static String yesterdayKey() => dayKey(todayStart().subtract(const Duration(days: 1)));

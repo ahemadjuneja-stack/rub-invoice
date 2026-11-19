@@ -9,11 +9,16 @@ import '../services/sync_service.dart';
 /// holding the origami "R" - before the title. Used on every screen so
 /// the Ruby mark is always visible, in a crisp white-on-ruby treatment
 /// that matches the app icon identity.
+///
+/// The billing screen opts OUT of the chip ([showBrand] = false): the
+/// full width there belongs to the customer identity ("Rajkot - Riya
+/// Cosmetic"), exactly like the paper header of a Miracle bill.
 class RubyAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final String? subtitle;
   final List<Widget>? actions;
   final PreferredSizeWidget? bottom;
+  final bool showBrand;
 
   const RubyAppBar({
     super.key,
@@ -21,6 +26,7 @@ class RubyAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.subtitle,
     this.actions,
     this.bottom,
+    this.showBrand = true,
   });
 
   @override
@@ -33,21 +39,23 @@ class RubyAppBar extends StatelessWidget implements PreferredSizeWidget {
       titleSpacing: 12,
       title: Row(
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
+          if (showBrand) ...[
+            Container(
+              width: 36,
+              height: 36,
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Image.asset(
+                'assets/icon/logo_r.png',
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+              ),
             ),
-            child: Image.asset(
-              'assets/icon/logo_r.png',
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.high,
-            ),
-          ),
-          const SizedBox(width: 10),
+            const SizedBox(width: 10),
+          ],
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,

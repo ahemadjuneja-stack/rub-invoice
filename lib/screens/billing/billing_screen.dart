@@ -44,6 +44,15 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
   bool _restored = false;
   int _billNo = 0; // invoice number this bill will get (header display)
 
+  /// Bill date (Miracle-style): the user can back-date or pre-date a
+  /// bill (kal ya parso). Every bill keeps its own date; reports and
+  /// ledger group by this date, not by "when the phone saved it".
+  DateTime _billDate = Dt.todayStart();
+
+  /// Saving a brand-new product straight from the bill ("Deo, 3, 103"
+  /// -> tap the bookmark icon -> it lives in inventory).
+  bool _savingProduct = false;
+
   /// Payment mode for THIS bill: 'udhar' (credit, nothing received now)
   /// or 'jama' (cash received now). Miracle-style one-tap toggle.
   String _payMode = 'udhar';
@@ -101,6 +110,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
       lines: List.of(_cart),
       payMode: _payMode,
       paidNowPaise: _payMode == 'jama' ? Money.parsePaise(_paidC.text) : 0,
+      billDateMs: _billDate.millisecondsSinceEpoch,
       savedAt: DateTime.now().millisecondsSinceEpoch,
     ));
   }
@@ -120,6 +130,9 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
       _payMode = d.payMode == 'jama' ? 'jama' : 'udhar';
       if (_payMode == 'jama' && d.paidNowPaise > 0) {
         _paidC.text = Money.fmtRupeesInput(d.paidNowPaise);
+      }
+      if (d.billDateMs > 0) {
+        _billDate = Dt.dayStartOf(d.billDateMs);
       }
     });
     showSnack(context, 'Draft restored - continue where you left');
@@ -260,6 +273,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
         customerName: widget.customer.name,
         lines: _cart,
         paidNowPaise: paid,
+        billDate: _billDate,
       );
       await BillDraftService.instance.clear(); // draft consumed
       SyncService.instance.syncSoon();
@@ -344,6 +358,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                     _cart.clear();
                     _paidC.clear();
                     _payMode = 'udhar';
+                    _billDate = Dt.todayStart();
                   });
                   _persistDraft();
                 },
@@ -365,26 +380,40 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
 
   // ---------------- build ----------------
 
+  /// Header identity, Miracle-style: where the customer used to show as
+  /// just "Riya", the full "City - Shop name" appears now
+  /// (e.g. "Rajkot - Riya Cosmetic").
+  String get _headerTitle {
+    final city = widget.customer.city.trim();
+    final shop = widget.customer.shopName.trim();
+    if (city.isNotEmpty && shop.isNotEmpty) return '$city - $shop';
+    if (shop.isNotEmpty) return shop;
+    if (city.isNotEmpty) return '$city - ${widget.customer.name}';
+    return widget.customer.name;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // No R chip here - the full width belongs to the customer identity,
+      // exactly like the printed header of a bill.
       appBar: RubyAppBar(
-        title: widget.customer.name,
-        subtitle: [
-          'Invoice #${_billNo == 0 ? '...' : _billNo}',
-          if (widget.customer.city.isNotEmpty) widget.customer.city,
-          Dt.fmtDate(DateTime.now()),
-        ].join('  •  '),
+        showBrand: false,
+        title: _headerTitle,
+        subtitle: 'Invoice #${_billNo == 0 ? '...' : _billNo}',
       ),
       body: Column(
         children: [
+          _dateBar(),
           _entryRow(),
           Expanded(
             child: _cart.isEmpty
-                ? EmptyState(
+                ? const EmptyState(
                     icon: Icons.receipt_long_outlined,
                     title: 'Cart is empty',
-                    subtitle: 'Type a product name above. Saved quantity & price fill in automatically.',
+                    subtitle:
+                        'Type a product name, qty and price. A saved name fills everything in. '
+                        'New product? Tap the inventory icon to save it for next time.',
                   )
                 : _cartList(),
           ),
@@ -392,6 +421,124 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
         ],
       ),
     );
+  }
+
+  // ---------------- bill date (Miracle-style) ----------------
+
+  Future<void> _pickBillDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _billDate,
+      firstDate: DateTime(now.year - 10),
+      lastDate: now.add(const Duration(days: 30)), // kal / parso ka bill bhi ban sakta hai
+      helpText: 'Select bill date',
+      initialEntryMode: DatePickerEntryMode.calendarOnly,
+    );
+    if (picked != null && mounted) {
+      setState(() => _billDate = DateTime(picked.year, picked.month, picked.day));
+      _persistDraft();
+    }
+  }
+
+  /// Slim tappable strip under the app bar: "Bill date  19 Nov 2026".
+  /// Tap -> calendar. The chosen date is stored with the draft, shown on
+  /// the bill, and used by reports/ledger (Miracle behaviour).
+  Widget _dateBar() {
+    final isToday = Dt.dayKey(_billDate) == Dt.todayKey();
+    return InkWell(
+      onTap: _pickBillDate,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+        color: const Color(0xFFF2F2F4),
+        child: Row(
+          children: [
+            const Icon(Icons.calendar_month_outlined, size: 17, color: Ruby.ruby),
+            const SizedBox(width: 8),
+            const Text(
+              'Bill date',
+              style: TextStyle(fontSize: 12.5, color: Ruby.muted, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              Dt.fmtDate(_billDate),
+              style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Ruby.ink),
+            ),
+            if (!isToday) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Ruby.rubyLight,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  Dt.labelFor(Dt.dayKey(_billDate)),
+                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Ruby.ruby),
+                ),
+              ),
+            ],
+            const Spacer(),
+            const Icon(Icons.edit_calendar_outlined, size: 16, color: Ruby.faint),
+            const SizedBox(width: 4),
+            const Text(
+              'Change',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Ruby.ruby),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------- quick save to inventory ----------------
+
+  /// "Deo, 3, 103" -> tap the inventory icon -> the product is saved to
+  /// inventory with these defaults. Next time typing "Deo" auto-fills
+  /// it; quantity/price stay editable from the Inventory screen.
+  Future<void> _saveProductToInventory() async {
+    final name = _productC.text.trim();
+    if (name.isEmpty) {
+      showSnack(context, 'Type the product name first');
+      _productF.requestFocus();
+      return;
+    }
+    final qty = double.tryParse(_qtyC.text.trim().replaceAll(',', '')) ?? 0;
+    final pricePaise = Money.parsePaise(_rateC.text);
+    if (qty <= 0 || pricePaise <= 0) {
+      showSnack(context, 'Enter quantity and price to save in inventory');
+      return;
+    }
+    setState(() => _savingProduct = true);
+    try {
+      final existing = await _repo.productByName(name);
+      if (existing != null) {
+        await _repo.upsertProduct(Product(
+          id: existing.id,
+          name: existing.name,
+          unit: existing.unit,
+          defaultQty: qty,
+          defaultPricePaise: pricePaise,
+          trackStock: existing.trackStock,
+          stockQty: existing.stockQty,
+          lowStock: existing.lowStock,
+          createdAt: existing.createdAt,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ));
+        if (mounted) {
+          showSnack(context,
+              '"${existing.name}" updated in inventory (qty ${Qty.fmt(qty)}, ${Money.fmt(pricePaise)})');
+        }
+      } else {
+        await _repo.newProduct(name: name, defaultQty: qty, defaultPricePaise: pricePaise);
+        if (mounted) {
+          showSnack(context, '"$name" saved to inventory - next time it will auto-fill');
+        }
+      }
+      await _loadCatalog();
+    } finally {
+      if (mounted) setState(() => _savingProduct = false);
+    }
   }
 
   Widget _entryRow() {
@@ -509,11 +656,30 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
             ),
           ),
           SizedBox(
-            width: 44,
-            child: IconButton(
-              onPressed: _addToCart,
-              icon: const Icon(Icons.add_circle, color: Ruby.ruby, size: 30),
-              tooltip: 'Add to bill',
+            width: 92,
+            child: Row(
+              children: [
+                Expanded(
+                  child: IconButton(
+                    onPressed: _savingProduct ? null : _saveProductToInventory,
+                    icon: _savingProduct
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Ruby.ruby),
+                          )
+                        : const Icon(Icons.inventory_2_outlined, color: Ruby.ink, size: 23),
+                    tooltip: 'Save this product to inventory',
+                  ),
+                ),
+                Expanded(
+                  child: IconButton(
+                    onPressed: _addToCart,
+                    icon: const Icon(Icons.add_circle, color: Ruby.ruby, size: 30),
+                    tooltip: 'Add to bill',
+                  ),
+                ),
+              ],
             ),
           ),
         ],

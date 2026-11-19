@@ -17,6 +17,7 @@ class BillDraft {
   final List<CartLine> lines;
   final String payMode; // 'udhar' | 'jama'
   final int paidNowPaise;
+  final int billDateMs; // chosen bill date (Miracle-style backdating)
   final int savedAt; // epoch ms
 
   BillDraft({
@@ -25,6 +26,7 @@ class BillDraft {
     required this.lines,
     this.payMode = 'udhar',
     this.paidNowPaise = 0,
+    this.billDateMs = 0,
     required this.savedAt,
   });
 
@@ -35,6 +37,7 @@ class BillDraft {
         'customer_name': customerName,
         'pay_mode': payMode,
         'paid_now_paise': paidNowPaise,
+        'bill_date_ms': billDateMs,
         'saved_at': savedAt,
         'lines': [
           for (final l in lines)
@@ -67,6 +70,7 @@ class BillDraft {
       lines: lines,
       payMode: (m['pay_mode'] ?? 'udhar') as String,
       paidNowPaise: ((m['paid_now_paise'] ?? 0) as num).toInt(),
+      billDateMs: ((m['bill_date_ms'] ?? 0) as num).toInt(),
       savedAt: ((m['saved_at'] ?? 0) as num).toInt(),
     );
   }
