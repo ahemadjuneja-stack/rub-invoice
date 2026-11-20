@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../core/app_log.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -339,7 +340,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
           );
         }
       } catch (e) {
-        debugPrint('[billing] save failed: $e');
+        appLog('[billing] save failed: $e');
         if (mounted) {
           showSnack(context,
               'Bill could not be saved - items are safe, try again',
@@ -378,7 +379,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
     } catch (e) {
       // The bill IS saved at this point - only the display/navigation
       // step failed. Land the user on the home list, never strand them.
-      debugPrint('[billing] post-save step failed: $e');
+      appLog('[billing] post-save step failed: $e');
       if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
     } finally {
       if (mounted) setState(() => _saving = false);

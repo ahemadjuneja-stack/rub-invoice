@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../core/app_log.dart';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -119,7 +120,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _loading = false;
       });
     } catch (e) {
-      debugPrint('[home] reload failed: $e');
+      appLog('[home] reload failed: $e');
       if (!mounted) return;
       setState(() {
         _loadError = 'Data could not load';

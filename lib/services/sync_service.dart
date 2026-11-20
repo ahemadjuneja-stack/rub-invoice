@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../core/app_log.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -83,7 +84,7 @@ class SyncService {
       } else {
         status.value = SyncStatus.offline;
       }
-    }, onError: (e) => debugPrint('[sync] auth stream error: $e'));
+    }, onError: (e) => appLog('[sync] auth stream error: $e'));
   }
 
   /// Fire-and-forget; call after every local mutation.
@@ -112,7 +113,7 @@ class SyncService {
       try {
         await PhotoSyncService.instance.run(db);
       } catch (e) {
-        debugPrint('[sync] photo step skipped: $e');
+        appLog('[sync] photo step skipped: $e');
       }
       status.value = SyncStatus.synced;
       // Spec: verify the access rules on every background sync too
@@ -120,7 +121,7 @@ class SyncService {
       // kill-switch reacts within one sync cycle as a safety net.
       await AccessService.instance.verifyOnce();
     } catch (e) {
-      debugPrint('[sync] error: $e');
+      appLog('[sync] error: $e');
       status.value = SyncStatus.error;
     } finally {
       _busy = false;

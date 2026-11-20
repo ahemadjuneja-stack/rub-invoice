@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../core/app_log.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -98,7 +99,7 @@ class _AuthGateState extends State<AuthGate> {
   /// The splash can no longer outlive this method.
   void _failsafeTimeout() {
     if (!mounted) return;
-    debugPrint('AuthGate failsafe fired - resolving splash after 3s');
+    appLog('AuthGate failsafe fired - resolving splash after 3s');
     // Stop waiting for authStateChanges: with no Firebase session
     // (exactly the case right after Clear Data) the build below now
     // shows the Login screen immediately.
@@ -130,7 +131,7 @@ class _AuthGateState extends State<AuthGate> {
         SyncService.instance.syncSoon();
       }
     } catch (e) {
-      debugPrint('local auth-state load failed: $e');
+      appLog('local auth-state load failed: $e');
     } finally {
       _loading = false;
       if (mounted) setState(() {});
@@ -156,7 +157,7 @@ class _AuthGateState extends State<AuthGate> {
           } catch (e) {
             // user profile fetch / listener setup failed (offline,
             // Clear Data, permissions): never keep the splash waiting.
-            debugPrint('auth state handling failed: $e');
+            appLog('auth state handling failed: $e');
             if (_access.state.value == AccessState.checking) {
               unawaited(_access.resolveFromCacheNow());
             }
@@ -167,7 +168,7 @@ class _AuthGateState extends State<AuthGate> {
         }, onError: (Object e) {
           // The auth STREAM itself errored - treat it like signed-out
           // and let the failsafe / first emission recover later.
-          debugPrint('authStateChanges stream error: $e');
+          appLog('authStateChanges stream error: $e');
           _authChecked = true;
           if (_access.state.value == AccessState.checking) {
             unawaited(_access.resolveFromCacheNow());
@@ -175,7 +176,7 @@ class _AuthGateState extends State<AuthGate> {
           if (mounted) setState(() {});
         });
       } catch (e) {
-        debugPrint('FirebaseAuth unavailable: $e');
+        appLog('FirebaseAuth unavailable: $e');
         _fb = null;
         // Do NOT wait for a stream that will never be bound.
         _authChecked = true;

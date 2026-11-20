@@ -59,11 +59,19 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
       // New Gmail -> Business Registration immediately (no waiting).
-      await Navigator.of(context).push(MaterialPageRoute(
+      // SECURITY/FIX: capture the Navigator NOW, while this LoginScreen
+      // element is still mounted. AuthGate rebuilds the moment the
+      // authStateChanges listener fires (the login screen is replaced by
+      // the splash / PIN flow underneath the pushed route), so a closure
+      // that calls Navigator.of(context) LATER would run on a defunct
+      // context, throw "deactivated widget", and the registration screen
+      // could never close ("Registration failed - please try again").
+      final nav = Navigator.of(context);
+      await nav.push(MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => RegistrationScreen(
           prefilledEmail: email,
-          onDone: () => Navigator.of(context).pop(),
+          onDone: () => nav.pop(),
         ),
       ));
       if (mounted) setState(() => _busy = false);

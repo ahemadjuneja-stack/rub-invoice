@@ -47,6 +47,19 @@ android {
         release {
             // Signs releases with the shared keystore above.
             signingConfig = signingConfigs.getByName("debug")
+            // SECURITY HARDENING (v0.2.21): R8 code shrinking + resource
+            // shrinking + obfuscation. The Java/Kotlin glue (Firebase
+            // auth, Google Sign-In, sqflite bridge) is stripped and
+            // renamed, so the APK resists trivial reverse engineering.
+            // Flutter's Dart code lives in libapp.so (AOT snapshot) and
+            // is not affected by R8; the keep-rules below preserve only
+            // what reflection (Firebase/Play Services) needs.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

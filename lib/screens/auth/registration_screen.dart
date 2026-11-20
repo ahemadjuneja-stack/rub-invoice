@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/app_log.dart';
+import '../../core/sanitize.dart';
 import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../../services/access_service.dart';
@@ -65,12 +67,14 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   }
 
   Future<void> _submit() async {
-    final business = _businessC.text.trim();
-    final owner = _ownerC.text.trim();
-    final mobile = _mobileC.text.trim();
-    final city = _cityC.text.trim();
-    final addr = _addrC.text.trim();
-    final gst = _gstC.text.trim();
+    // XSS hardening: clean every user-typed field once, here, before it
+    // reaches Firestore and the local database (same rules as Repo).
+    final business = Sanitize.text(_businessC.text, maxLen: 80);
+    final owner = Sanitize.text(_ownerC.text, maxLen: 80);
+    final mobile = Sanitize.digits(_mobileC.text);
+    final city = Sanitize.text(_cityC.text, maxLen: 60);
+    final addr = Sanitize.multiline(_addrC.text);
+    final gst = Sanitize.text(_gstC.text, maxLen: 20).toUpperCase();
     final pin = _pinC.text.trim();
     final pin2 = _pin2C.text.trim();
 
@@ -121,6 +125,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             pinHash: stored.hash,
             pinSalt: stored.salt,
           );
+          // Flip the access verdict NOW (doc just created, device already
+          // registered): the live users/{uid} listener may take a moment,
+          // but the owner must land on the PIN screen immediately - never
+          // on a stale "pending" splash behind this form.
+          await AccessService.instance.verifyOnce();
         } catch (e) {
           if (!mounted) return;
           setState(() => _busy = false);
@@ -144,10 +153,20 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             ? 'Business registered! Ruby Invoice is ready'
             : 'Registered. Ruby Invoice is ready!',
       );
-      widget.onDone();
+      // The account IS created here - a navigation hiccup below must
+      // never show "Registration failed" or leave this form stuck. The
+      // route is popped defensively (own context - always mounted here);
+      // if the host callback still fails, AuthGate's live listeners
+      // rebuild the flow (PIN screen -> home) on their own.
+      try {
+        widget.onDone();
+      } catch (e) {
+        appLog('[registration] onDone failed - popping own route: $e');
+        if (mounted) Navigator.of(context).pop();
+      }
     } catch (e) {
       // v0.2.19: registration must never die silently (PIN save, prefs).
-      debugPrint('[registration] failed: $e');
+      appLog('[registration] failed: $e');
       if (mounted) {
         showSnack(context, 'Registration failed - please try again',
             error: true);

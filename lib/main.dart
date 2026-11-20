@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app.dart';
+import 'core/app_log.dart';
 import 'data/db.dart';
 import 'data/repo.dart';
 import 'firebase_options.dart';
@@ -42,7 +45,7 @@ Future<void> main() async {
   try {
     await DB.open().timeout(left());
   } catch (e) {
-    debugPrint('DB open slow or failed - continuing: $e');
+    appLog('DB open slow or failed - continuing: $e');
   }
 
   // Billty (lorry receipt) photos expire after 45 days: expired files
@@ -64,8 +67,14 @@ Future<void> main() async {
       FirebaseFirestore.instance.settings =
           const Settings(persistenceEnabled: true);
       fbReady = true;
+      // SECURITY (v0.2.21): Firebase App Check - Play Integrity in
+      // release, debug provider in dev builds. Activation is readiness
+      // only: until the owner turns ON enforcement in the Firebase
+      // console (start in "monitor" mode!), nothing is rejected, so
+      // sideloaded installs keep working. See docs/SECURITY.md.
+      unawaited(_activateAppCheck());
     } catch (e) {
-      debugPrint('Firebase init failed or too slow, continuing offline: $e');
+      appLog('Firebase init failed or too slow, continuing offline: $e');
       fbReady = false;
       // v0.2.19: boot failed on a dead-slow network? The app used to
       // stay offline (no login, no cloud sync) for the WHOLE session.
@@ -79,7 +88,7 @@ Future<void> main() async {
   try {
     await SyncService.instance.configure(fbReady: fbReady).timeout(left());
   } catch (e) {
-    debugPrint('Sync configure skipped (boot budget): $e');
+    appLog('Sync configure skipped (boot budget): $e');
   }
 
   // Remote feature flags (config/app): notice banner, force-update gate
@@ -89,7 +98,7 @@ Future<void> main() async {
   try {
     await RemoteConfigService.instance.init(fbReady: fbReady).timeout(left());
   } catch (e) {
-    debugPrint('RemoteConfig init skipped (boot budget): $e');
+    appLog('RemoteConfig init skipped (boot budget): $e');
   }
 
   // FAILSAFE GUARANTEE: first frame - and therefore the end of the
@@ -112,10 +121,27 @@ Future<void> _recoverFirebaseInBackground() async {
           const Settings(persistenceEnabled: true);
       await SyncService.instance.configure(fbReady: true);
       await RemoteConfigService.instance.init(fbReady: true);
-      debugPrint('Firebase recovered in background - login + sync live');
+      unawaited(_activateAppCheck());
+      appLog('Firebase recovered in background - login + sync live');
       return;
     } catch (e) {
-      debugPrint('Firebase background retry $i failed: $e');
+      appLog('Firebase background retry $i failed: $e');
     }
+  }
+}
+
+/// App Check activation (best effort - a Play Services hiccup on a
+/// dead-slow network must never block the boot). Release builds use
+/// Play Integrity; debug builds use the debug provider whose token is
+/// registered in the Firebase console for local development.
+Future<void> _activateAppCheck() async {
+  try {
+    await FirebaseAppCheck.instance.activate(
+      androidProvider:
+          kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
+    );
+    appLog('App Check activated (${kDebugMode ? 'debug' : 'playIntegrity'})');
+  } catch (e) {
+    appLog('App Check activation skipped: $e');
   }
 }

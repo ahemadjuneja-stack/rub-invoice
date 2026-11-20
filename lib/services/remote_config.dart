@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import '../core/app_log.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -75,7 +76,7 @@ class RemoteConfigService {
         config.value =
             RemoteConfig.fromMap(jsonDecode(cached) as Map<String, dynamic>);
       } catch (e) {
-        debugPrint('remote config cache parse failed: $e');
+        appLog('remote config cache parse failed: $e');
       }
     }
     if (!fbReady) return;
@@ -91,7 +92,7 @@ class RemoteConfigService {
         final sp2 = await SharedPreferences.getInstance();
         await sp2.setString('remote_config_v1', jsonEncode(data));
       } catch (_) {}
-    }, onError: (e) => debugPrint('remote config listen failed: $e'));
+    }, onError: (e) => appLog('remote config listen failed: $e'));
   }
 
   void dispose() {

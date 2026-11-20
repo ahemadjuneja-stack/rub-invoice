@@ -1,4 +1,5 @@
 import 'dart:io';
+import '../core/app_log.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -56,12 +57,12 @@ class PhotoSyncService {
     try {
       await _uploadPending(db, uid);
     } catch (e) {
-      debugPrint('[photo-sync] upload: $e');
+      appLog('[photo-sync] upload: $e');
     }
     try {
       await _downloadMissing(db, uid);
     } catch (e) {
-      debugPrint('[photo-sync] download: $e');
+      appLog('[photo-sync] download: $e');
     }
   }
 

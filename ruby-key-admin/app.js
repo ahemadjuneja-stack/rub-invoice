@@ -512,3 +512,25 @@ function listenUsers() {
     toast('Live read blocked by rules: ' + err.code, true);
   });
 }
+
+// ---------------------------------------------------------------- PWA
+// Service worker registration moved here from index.html so the strict
+// CSP can forbid inline scripts entirely (no behaviour change).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+
+// ---------------------------------------------------------------- notes
+// TRUST MODEL (security audit v0.2.21):
+//   * This panel keeps NO security state in localStorage/sessionStorage.
+//     The session is Firebase Auth's own IndexedDB persistence, and the
+//     admin identity + every write is re-verified SERVER-SIDE by the
+//     Firestore security rules on every request. A tampered local
+//     storage cannot promote a non-admin to admin.
+//   * Subscription validity shown here is read live from Firestore -
+//     never from a cached local flag; the phones re-verify the same
+//     fields against Firestore on every launch and every sync tick.
+//   * Only the public Firebase web config lives in firebase-config.js
+//     (safe by design: it identifies, not authorizes, the project).

@@ -1,16 +1,26 @@
 rules_version = '2';
 
 // =====================================================================
-// Ruby Invoice - Firebase Storage rules
+// Ruby Invoice - Firebase Storage rules v2 (security-audit hardening)
 //
 // Photos (billty / payment proofs / purchase bills) live under the
 // owner's own prefix:
 //     shops/{uid}/photos/{table}_{rowId}.jpg
 //
-// * Owner: read/write ONLY their own files, only while the account is
-//   active, and uploads are capped at 300 KB (client-side compression
-//   is enforced here too - big uploads are rejected by the rules).
-// * Admin: full access for support / cleanup.
+// v2 hardening:
+//   * Owner: read/write ONLY their own files.
+//   * Uploads strictly image/* (content-type is client-supplied, so the
+//     2 MB cap plus App Check enforcement are the real abuse guards).
+//   * Hard size cap: 2 MB per file (spec). The app itself compresses
+//     billty/proof/purchase photos to <= 300 KB before upload.
+//   * users/{uid}/bilty/{fileName} - reserved spec path, same rules,
+//     ready for future billty-only flows.
+//   * Admin: read + delete for support / cleanup (never re-upload).
+//
+// NOTE: Storage rules cannot call Firestore for the account status -
+// the blocked/expiry gate is enforced on every Firestore write (see
+// firestore.rules) and Firebase App Check (Play Integrity) blocks
+// non-app clients at the service level once enforced in the console.
 // =====================================================================
 service firebase.storage {
   match /b/{bucket}/o {
@@ -25,23 +35,32 @@ service firebase.storage {
       return request.auth != null && request.auth.uid == uid;
     }
 
-    function isActiveOwner(uid) {
-      // NOTE: Storage rules cannot call Firestore. The ACTIVE check is
-      // enforced on every Firestore write (see firestore.rules); the
-      // app itself blocks suspended/expired phones before any upload.
-      return isOwner(uid);
+    // Upload must be an image and under the 2 MB cap (spec: Bilty /
+    // receipt uploads). Client compresses to <= 300 KB - the cap here
+    // only exists so a tampered client cannot stuff the bucket.
+    function validImageUpload() {
+      return request.resource != null
+          && request.resource.contentType.matches('image/.*')
+          && request.resource.size < 2 * 1024 * 1024;
     }
 
     match /shops/{uid}/{allPaths=**} {
-      allow read: if isActiveOwner(uid) || isAdmin();
+      allow read: if isOwner(uid) || isAdmin();
 
-      // Upload / overwrite: owner only, images only, max 300 KB
-      // (spec: compress client-side to <= 300 KB).
-      allow create, update: if isActiveOwner(uid)
-          && request.resource.size <= 300 * 1024
-          && request.resource.contentType.matches('image/.*');
+      allow create, update: if isOwner(uid) && validImageUpload();
 
-      allow delete: if isActiveOwner(uid) || isAdmin();
+      allow delete: if isOwner(uid) || isAdmin();
     }
+
+    // Spec path for billty uploads (future flows); same hard rules.
+    match /users/{uid}/bilty/{fileName} {
+      allow read: if isOwner(uid) || isAdmin();
+
+      allow create, update: if isOwner(uid) && validImageUpload();
+
+      allow delete: if isOwner(uid) || isAdmin();
+    }
+
+    // Everything else (including the root) is denied by default.
   }
 }

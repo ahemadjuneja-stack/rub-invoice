@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import '../core/sanitize.dart';
 import '../models/models.dart';
 import '../models/settlement.dart';
 import 'db.dart';
@@ -81,7 +82,13 @@ class Repo {
 
   Future<void> upsertCustomer(Customer c) async {
     final db = await _db;
+    // Same choke-point cleaning as newCustomer (edit path).
     final map = c.copyWith(updatedAt: _now()).toMap();
+    map['name'] = Sanitize.text(c.name);
+    map['shop_name'] = Sanitize.text(c.shopName);
+    map['city'] = Sanitize.text(c.city);
+    map['phone'] = Sanitize.digits(c.phone);
+    map['address'] = Sanitize.multiline(c.address);
     await db.insert('customers', map, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -96,11 +103,13 @@ class Repo {
     final now = _now();
     final c = Customer(
       id: _uuid.v4(),
-      name: name.trim(),
-      shopName: shopName.trim(),
-      city: city.trim(),
-      phone: phone.trim(),
-      address: address.trim(),
+      // XSS hardening: user-typed text is cleaned at the single write
+      // choke point (Repo), so no screen can forget it.
+      name: Sanitize.text(name),
+      shopName: Sanitize.text(shopName),
+      city: Sanitize.text(city),
+      phone: Sanitize.digits(phone),
+      address: Sanitize.multiline(address),
       openingBalancePaise: openingBalancePaise,
       createdAt: now,
       updatedAt: now,
@@ -222,10 +231,10 @@ class Repo {
     final purchase = Purchase(
       id: _uuid.v4(),
       purchaseNo: no,
-      supplierName: supplierName.trim(),
-      supplierPhone: supplierPhone.trim(),
+      supplierName: Sanitize.text(supplierName),
+      supplierPhone: Sanitize.digits(supplierPhone),
       amountPaise: amountPaise,
-      note: note.trim(),
+      note: Sanitize.text(note),
       photoPath: photoPath,
       purchaseDate: ms,
       purchaseDay: _dayKey(ms),
@@ -297,12 +306,12 @@ class Repo {
         id: billId,
         billNo: billNo,
         customerId: customerId,
-        customerName: customerName,
+        customerName: Sanitize.text(customerName),
         billDate: billMs,
         billDay: dayKey,
         subtotalPaise: subtotal,
         totalPaise: subtotal,
-        note: note,
+        note: Sanitize.text(note),
         createdAt: now,
         updatedAt: now,
       );
@@ -666,7 +675,7 @@ class Repo {
         billtyAt: billtyPath.isEmpty
             ? 0
             : (old.billtyPath == billtyPath ? old.billtyAt : now),
-        note: note,
+        note: Sanitize.text(note),
         createdAt: old.createdAt,
         updatedAt: now,
         isDeleted: 0,
@@ -681,7 +690,7 @@ class Repo {
       mode: mode,
       billtyPath: billtyPath,
       billtyAt: billtyPath.isEmpty ? 0 : now,
-      note: note,
+      note: Sanitize.text(note),
       createdAt: now,
       updatedAt: now,
     );
@@ -745,7 +754,7 @@ class Repo {
       payDate: date.millisecondsSinceEpoch,
       payDay: _dayKey(date.millisecondsSinceEpoch),
       mode: mode,
-      note: note,
+      note: Sanitize.text(note),
       proofPath: proofPath,
       createdAt: now,
       updatedAt: now,
@@ -968,7 +977,9 @@ class Repo {
 
   Future<void> saveShopProfile(Map<String, String> values) async {
     for (final e in values.entries) {
-      await setMeta(e.key, e.value);
+      await setMeta(e.key, e.key == 'shop_phone'
+          ? Sanitize.digits(e.value)
+          : Sanitize.text(e.value, maxLen: 200));
     }
   }
 

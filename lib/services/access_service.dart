@@ -356,6 +356,15 @@ class AccessService {
   }
 
   Future<void> _evaluateFromCache() async {
+    // SECURITY (v0.2.21 trust model): SharedPreferences NEVER decides
+    // whether an account is valid. The cache is only a SPLASH FAILSAFE
+    // for offline launches - the moment any live Firestore verdict
+    // arrives (snapshot listener or verifyOnce() on every sync tick)
+    // it overrides whatever was cached. A tampered local cache cannot
+    // extend a trial, unblock an account or add a device: those fields
+    // are server-enforced (firestore.rules v3 - only the Admin Gmail
+    // writes them, and shops/{uid} access re-checks status + expiry on
+    // EVERY cloud request).
     final sp = await SharedPreferences.getInstance();
     final raw = sp.getString(_kAccountCache);
     if (raw == null || raw.isEmpty) return; // nothing cached yet

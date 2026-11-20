@@ -1,18 +1,37 @@
 rules_version = '2';
 
 // =====================================================================
-// Ruby Invoice - Firestore security rules (v2, spec-compliant)
+// Ruby Invoice - Firestore security rules v3 (security-audit hardening)
 //
-// Models:
-//   users/{uid}                     -> account + plan + device list
-//   users/{uid} ... profile fields  -> owner-editable ONLY these
+// Threat model: a malicious client (rooted phone, curl + stolen Gmail
+// session, modified APK) talking straight to Firestore. Every claim the
+// client makes is re-verified here - the app's own checks are UX only.
+//
+// Data model:
+//   users/{uid}                     -> account + plan + validity + devices
 //   shops/{uid}/{document=**}       -> private billing data (sync)
 //   shops/{uid}/photos/{photoKey}   -> photo URL markers (Storage sync)
 //   subscriptions/{subId}           -> Razorpay-ready subscription ledger
 //   config/{docId}                  -> remote feature flags (public read)
 //
-// Admin = the whitelisted OWNER Gmail (Ruby Key panel / Firebase
-// console). Everyone else can only ever touch their OWN account.
+// v3 changes (vs v2):
+//   1. BLOCKED or EXPIRED accounts lose ALL cloud access server-side
+//      (the old rules only checked status == "active").
+//   2. Protected fields (status, plan, maxDevices, trialEndDate,
+//      subscriptionEndDate, expiryDate, trialStartDate, role, email,
+//      registeredDevices in the profile path) can only ever be changed
+//      by the whitelisted Admin Gmail - the owner whitelists were
+//      already strict, they are now also expiry/blocked-gated.
+//   3. 2-DEVICE LIMIT enforced server-side: the owner's device list is
+//      append-or-remove only and can never exceed maxDevices. A third
+//      device's registration write is rejected by the rules, so it
+//      cannot become an approved device.
+//   4. Registration hardening: the doc's email must match the signed-in
+//      Google identity, status must be trial-pending-or-active, a role
+//      field can never be injected at create time.
+//   5. subscriptions stay admin-writable ONLY - a client can never
+//      self-activate a paid plan (the Razorpay webhook is the only
+//      other writer; see server/razorpay-webhook/).
 // =====================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -24,18 +43,62 @@ service cloud.firestore {
           && request.auth.token.email.lower() == 'ahemadjuneja@gmail.com';
     }
 
-    function isOwner(uid) {
-      return request.auth != null && request.auth.uid == uid;
+    function signedIn() {
+      return request.auth != null;
     }
 
-    // Data access (bills, customers, photos) only while ACTIVE - a
-    // blocked or expired account loses cloud access automatically.
-    // The device-id part of the limit lives in the app (AccessService);
-    // rules below make sure an unknown device cannot even sign in to
-    // reach that check.
-    function isActiveOwner(uid) {
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // ---------------- account / validity helpers --------------------
+    // Firestore rules CANNOT parse date strings. All validity fields
+    // must be written as Firestore Timestamps (Ruby Key does) or epoch
+    // milliseconds (legacy app rows). Anything else = treated as absent.
+    function asMillis(v) {
+      return v is rules.Timestamp ? v.toMillis()
+           : (v is int ? v : 0);
+    }
+
+    function isBlocked(account) {
+      return account.get('status', '') == 'blocked';
+    }
+
+    // Mirrors AccountInfo.effectiveExpiry in the app exactly:
+    //   subscriptionEndDate ?? (plan == "trial" ? trialEndDate : null)
+    //                        ?? legacy expiryDate
+    function isExpired(account) {
+      let sub = account.get('subscriptionEndDate');
+      let trial = account.get('plan', '') == 'trial'
+          ? account.get('trialEndDate') : null;
+      let legacy = account.get('expiryDate');
+      let end = sub != null ? sub
+              : (trial != null ? trial : legacy);
+      return end != null
+          && request.time.toMillis() > asMillis(end);
+    }
+
+    // THE row-level gate for all private billing data: the signed-in
+    // user is the row owner AND the account is active, not blocked and
+    // not past its trial/subscription validity. A blocked or expired
+    // phone keeps its LOCAL database (offline billing still works) but
+    // loses every cloud read/write - the kill switch is server-side.
+    function canUseCloud(uid) {
+      let account = get(/databases/$(database)/documents/users/$(uid)).data;
       return isOwner(uid)
-          && get(/databases/$(database)/documents/users/$(uid)).data.status == 'active';
+          && account.get('status', '') == 'active'
+          && !isBlocked(account)
+          && !isExpired(account);
+    }
+
+    // Owner may edit the account only while it is usable (an active,
+    // unexpired trial/subscription). Blocked/expired accounts can be
+    // changed ONLY by the admin - that is what re-activates them.
+    function ownerCanSelfEdit(uid) {
+      let account = get(/databases/$(database)/documents/users/$(uid)).data;
+      return isOwner(uid)
+          && !isBlocked(account)
+          && !isExpired(account);
     }
 
     // ---------------- SELF-SERVE ACTIVATION -------------------------
@@ -52,40 +115,56 @@ service cloud.firestore {
     // users/{uid} - the account record
     // ----------------------------------------------------------------
     match /users/{userId} {
-      allow get, list: if request.auth != null
+      allow get, list: if signedIn()
                          && (isOwner(userId) || isAdmin());
 
-      // Registration (new Gmail): the app creates the doc itself with
-      // plan "trial", 7-day trial window and maxDevices 2.
-      allow create: if request.auth != null
-                      && isOwner(userId)
-                      && request.resource.data.maxDevices == 2
-                      && request.resource.data.plan == 'trial'
-                      && (request.resource.data.status == 'pending'
-                          || (request.resource.data.status == 'active'
-                              && isAutoApproveOn()));
+      // Registration (new Gmail): the app creates the doc itself.
+      // Hard constraints - the client cannot register for somebody
+      // else, cannot be born "blocked"/"paid", cannot seed extra
+      // devices and can never inject a "role" field.
+      allow create: if isOwner(userId)
+          && request.resource.data.get('email', '') != null
+          && request.resource.data.email.lower()
+                 == request.auth.token.email.lower()
+          && request.resource.data.maxDevices == 2
+          && request.resource.data.plan == 'trial'
+          && request.resource.data.status in ['pending', 'active']
+          && (request.resource.data.status == 'pending'
+              || isAutoApproveOn())
+          && request.resource.data.trialEndDate != null
+          && request.resource.data.registeredDevices.size()
+                 <= request.resource.data.maxDevices
+          && !request.resource.data.keys().hasAny(['role']);
 
       // Updates:
       //  * admin (Ruby Key): anything - status / plan / validity /
       //    maxDevices / device reset (the kill switch).
       //  * owner: ONLY profile fields (business name, owner, mobile,
-      //    city, address, gst, PIN) - never status / plan / validity.
-      //  * owner: self device registration or removal within the 2
-      //    device limit (registeredDevices + deviceModels together).
-      //  * owner: self-activation pending -> active while auto_approve.
-      allow update: if request.auth != null && (
+      //    city, address, gst, PIN) - never status / plan / validity /
+      //    role / email - and only while the account is usable.
+      //  * owner: device registration / removal (Device Limit screen):
+      //    list may only GROW or SHRINK (never swapped wholesale) and
+      //    can never exceed maxDevices -> THE 2-device limit lives
+      //    here, server-side, not just in the app.
+      //  * owner: one-shot self-activation pending -> active while
+      //    auto_approve is on.
+      allow update: if signedIn() && (
           isAdmin()
-          || (isOwner(userId)
+          || (ownerCanSelfEdit(userId)
               && request.resource.data.diff(resource.data).affectedKeys()
                     .hasOnly(['businessName', 'ownerName', 'mobile', 'phone',
                               'city', 'address', 'gst', 'pinHash', 'pinSalt',
                               'updatedAt']))
-          || (isOwner(userId)
+          || (ownerCanSelfEdit(userId)
               && request.resource.data.diff(resource.data).affectedKeys()
                     .hasOnly(['registeredDevices', 'deviceModels', 'updatedAt'])
               && request.resource.data.registeredDevices.size()
-                    <= request.resource.data.maxDevices)
-          || (isOwner(userId)
+                    <= resource.data.maxDevices
+              && (request.resource.data.registeredDevices
+                    .hasAll(resource.data.registeredDevices)
+                  || resource.data.registeredDevices
+                    .hasAll(request.resource.data.registeredDevices)))
+          || (ownerCanSelfEdit(userId)
               && request.resource.data.diff(resource.data).affectedKeys()
                     .hasOnly(['status', 'updatedAt'])
               && resource.data.status == 'pending'
@@ -98,30 +177,37 @@ service cloud.firestore {
 
     // ----------------------------------------------------------------
     // shops/{uid}/... - private billing data + photo markers
-    // Isolation: only the owner; only while the account is active.
+    // Strict single-owner isolation (BOLA): even the admin has no rule
+    // path here - support needs an explicit owner-present session.
+    // Blocked / expired accounts: read AND write denied server-side.
     // ----------------------------------------------------------------
     match /shops/{shopId}/{document=**} {
-      allow read, write: if isActiveOwner(shopId);
+      allow read, write: if canUseCloud(shopId);
     }
 
     // ----------------------------------------------------------------
-    // subscriptions - Razorpay-ready schema (Razorpay webhook will
-    // write the same shape later using the server SDK):
+    // subscriptions - Razorpay-ready schema. The ledger is written by
+    // the ADMIN (manual extension via Ruby Key) and later by the
+    // Razorpay webhook (server SDK, bypasses rules). A client can read
+    // its own rows and can NEVER write - no self-service "paid" plan.
     //   { userId, planId, amount, currency, razorpayOrderId,
     //     razorpayPaymentId, status, validUntil, note, createdAt }
     // ----------------------------------------------------------------
     match /subscriptions/{subId} {
       allow read: if isAdmin()
-        || (request.auth != null && resource.data.userId == request.auth.uid);
+        || (signedIn() && resource.data.userId == request.auth.uid);
       allow create, update, delete: if isAdmin();
     }
 
     // ----------------------------------------------------------------
-    // config/{docId} - remote feature flags (no private data).
+    // config/{docId} - remote feature flags (no private data). Public
+    // read: the app must see auto_approve / min_version before login.
     // ----------------------------------------------------------------
     match /config/{docId} {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // Everything not matched above is denied by default.
   }
 }

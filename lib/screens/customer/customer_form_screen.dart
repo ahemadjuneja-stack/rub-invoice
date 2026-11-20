@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/app_log.dart';
 
 import '../../core/theme.dart';
 import '../../data/repo.dart';
@@ -140,7 +141,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     } catch (e) {
       // v0.2.19: a failed save used to reset silently - the user tapped
       // SAVE and "nothing happened". Now it always tells them.
-      debugPrint('[customer] save failed: $e');
+      appLog('[customer] save failed: $e');
       if (mounted) {
         showSnack(context, 'Could not save customer - please try again',
             error: true);

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import '../core/app_log.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -66,7 +67,7 @@ class UpdateService {
         apk = _firstApkUrl(body);
       }
     } catch (e) {
-      debugPrint('GitHub API check failed, trying atom fallback: $e');
+      appLog('GitHub API check failed, trying atom fallback: $e');
     }
     // RELIABILITY FALLBACK (fix: "naya update nahi aa raha"): the API
     // above is rate-limited per IP (60/hour) - shared mobile CGNAT IPs
@@ -78,7 +79,7 @@ class UpdateService {
         latest = t;
         apk = a;
       } catch (e) {
-        debugPrint('atom fallback failed too: $e');
+        appLog('atom fallback failed too: $e');
       }
     }
     if (latest.isEmpty) {
@@ -208,7 +209,7 @@ class UpdateService {
       readyPath.value = file.path;
     } catch (e) {
       lastError = e.toString();
-      debugPrint('APK download failed: $e');
+      appLog('APK download failed: $e');
       if (await file.exists()) await file.delete();
       downloadProgress.value = 0;
     } finally {

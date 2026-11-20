@@ -1,4 +1,5 @@
 import 'dart:io';
+import '../core/app_log.dart';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:sqflite/sqflite.dart';
@@ -67,13 +68,13 @@ class DB {
         return db;
       } catch (e) {
         last = e;
-        debugPrint('[db] open attempt $attempt failed: $e');
+        appLog('[db] open attempt $attempt failed: $e');
         if (attempt < 4) {
           await Future<void>.delayed(const Duration(milliseconds: 400));
         }
       }
     }
-    debugPrint('[db] file seems broken - quarantining: $last');
+    appLog('[db] file seems broken - quarantining: $last');
     final stamp = DateTime.now().millisecondsSinceEpoch;
     for (final suffix in ['', '-wal', '-shm', '-journal']) {
       try {
@@ -82,7 +83,7 @@ class DB {
           await f.rename('$path$suffix.corrupt_$stamp');
         }
       } catch (e) {
-        debugPrint('[db] quarantine rename failed for $suffix: $e');
+        appLog('[db] quarantine rename failed for $suffix: $e');
       }
     }
     final db = await openDatabase(

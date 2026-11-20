@@ -3,6 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- SECURITY: strict CSP - no inline scripts, all API traffic pinned to
+       Google/Firebase endpoints. Any injected script tag in a rendered
+       user field would be blocked even before app.js's escaping. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://firestore.googleapis.com https://firebasestorage.googleapis.com https://firebasestorage.app https://firebasestorage.googleapis.com https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://accounts.google.com wss://*.firebaseio.com wss://*.firebasedatabase.app; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'" />
+  <meta name="referrer" content="no-referrer" />
   <title>Ruby Key - Admin</title>
   <meta name="description" content="Ruby Key - admin panel for Ruby Invoice: users, trials, subscriptions, devices." />
   <meta name="theme-color" content="#9B111E" />
@@ -25,13 +31,7 @@
   </div>
   <noscript>Ruby Key needs JavaScript. Please enable it and reload.</noscript>
   <script src="./firebase-config.js"></script>
+  <!-- SW registration lives at the end of app.js (CSP: no inline scripts) -->
   <script type="module" src="./app.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(() => {});
-      });
-    }
-  </script>
 </body>
 </html>
