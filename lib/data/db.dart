@@ -34,6 +34,22 @@ class DB {
     return _opening ??= _openNow().whenComplete(() => _opening = null);
   }
 
+  /// Closes the cached handle and clears the single-flight slot so the
+  /// next [open] really reopens the file. The engine tests need this:
+  /// each test gets its own temp databases directory, and writing to a
+  /// handle whose file was deleted under it makes SQLite fail with
+  /// SQLITE_READONLY ("attempt to write a readonly database") - the
+  /// stale handle must be dropped between tests. The app itself never
+  /// swaps the database file, so production never needs this.
+  static Future<void> resetForTest() async {
+    final h = _handle;
+    _handle = null;
+    _opening = null;
+    try {
+      await h?.close();
+    } catch (_) {}
+  }
+
   static Future<Database> _openNow() async {
     final dir = await getDatabasesPath();
     final path = p.join(dir, 'ruby_invoice.db');

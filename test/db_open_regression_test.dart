@@ -28,6 +28,11 @@ void main() {
   late Directory tmp;
 
   setUp(() async {
+    // Drop any handle cached by the previous test FIRST: after tearDown
+    // deletes that test's temp directory, the old handle points to an
+    // unlinked file and every write fails with SQLITE_READONLY
+    // ("attempt to write a readonly database").
+    await DB.resetForTest();
     tmp = await Directory.systemTemp.createTemp('ruby_db_test');
     await databaseFactory.setDatabasesPath(tmp.path);
   });
@@ -57,21 +62,31 @@ void main() {
 
   test('corrupt db file is quarantined and a working db is created',
       () async {
-    // seed a good db, then smash the file
+    // seed a good db, then smash the file. resetForTest() closes AND
+    // clears the cached handle - a plain handle.close() would leave
+    // DB._open() handing back the closed instance instead of reopening.
     await Repo.instance.newCustomer(name: 'Before Crash');
-    final handle = await DB.open();
-    await handle.close();
+    await DB.resetForTest();
 
     final path = p.join(await getDatabasesPath(), 'ruby_invoice.db');
     File(path).writeAsStringSync('NOT A DATABASE');
 
-    final healed = await DB.open(); // must not throw
+    // must quarantine the broken file and end with a working database
+    final healed = await DB.open();
     final tables = await healed
         .rawQuery("SELECT name FROM sqlite_master WHERE type='table'");
     expect(tables, isNotEmpty);
 
     final c = await Repo.instance.newCustomer(name: 'After Heal');
     expect((await Repo.instance.getCustomer(c.id))!.name, 'After Heal');
+
+    // the smashed file must survive next to the new one (never deleted)
+    final quarantined = Directory(await getDatabasesPath())
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.contains('.corrupt_'))
+        .toList();
+    expect(quarantined, isNotEmpty, reason: 'corrupt file must be quarantined, not deleted');
   });
 
   test('every save path leaves dirty=1 for the sync push', () async {
