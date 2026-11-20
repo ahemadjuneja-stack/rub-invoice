@@ -62,9 +62,6 @@
 -dontwarn androidx.**
 
 # ---- generic safety nets ---------------------------------------------
-# Annotations are only metadata - drop them to shrink further
--dontkeepattributes RuntimeVisibleAnnotations,AnnotationDefault
-# Keep source file + line numbers OFF (obfuscation), but keep the
-# mapping file uploaded by CI for crash symbolication:
-#   build/app/outputs/mapping/release/mapping.txt
+# Obfuscated stack traces: keep the mapping file (CI uploads it for
+# crash symbolication) and neutralize the original file names.
 -renamesourcefileattribute SourceFile
