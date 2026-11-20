@@ -335,6 +335,26 @@ class AccessService {
 
   void recheckNow() => verifyOnce();
 
+  /// SPLASH FAILSAFE: resolve a "checking" verdict IMMEDIATELY from
+  /// the cached admin snapshot and the local registration marks -
+  /// never from the network. Called by the AuthGate 3-second failsafe
+  /// timer when the live users/{uid} verdict has not arrived in time
+  /// (slow network, Clear Data, Firestore hang). The normal live
+  /// listener keeps running and corrects the verdict the moment the
+  /// real snapshot lands.
+  Future<void> resolveFromCacheNow() async {
+    if (state.value != AccessState.checking) return;
+    try {
+      await _evaluateOffline();
+    } catch (_) {}
+    // Absolute last resort - a screen that explains itself beats an
+    // endless splash. PendingApprovalScreen self-corrects when the
+    // live snapshot arrives.
+    if (state.value == AccessState.checking) {
+      state.value = AccessState.pending;
+    }
+  }
+
   Future<void> _evaluateFromCache() async {
     final sp = await SharedPreferences.getInstance();
     final raw = sp.getString(_kAccountCache);

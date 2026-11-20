@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,6 +29,12 @@ import 'registration_screen.dart';
 ///
 /// OFFLINE MODE (Firebase not configured):
 ///   registered locally + PIN -> HomeScreen (no admin gate exists).
+///
+/// SPLASH FAILSAFE: a strict 3-second timer guarantees the splash
+/// ALWAYS resolves - to the Login screen when currentUser is null
+/// (e.g. right after Clear Data) or to the cached access verdict
+/// otherwise - even if authStateChanges never emits, the user
+/// profile fetch hangs, or any startup error is thrown.
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
@@ -44,6 +52,12 @@ class _AuthGateState extends State<AuthGate> {
   FirebaseAuth? _fb;
   bool _listenersBound = false;
 
+  /// SPLASH FAILSAFE (fix: infinite splash after Clear Data): fires
+  /// exactly 3 seconds after initState. By then the auth state has
+  /// almost certainly emitted; if it has not, the timer resolves the
+  /// splash itself instead of waiting on Firebase / the network.
+  Timer? _failsafe;
+
   /// Set on the first authStateChanges emission. Until then a Firebase
   /// login is being RESTORED (this survives APK updates) - the splash
   /// must stay up instead of flashing the registration screen.
@@ -56,26 +70,58 @@ class _AuthGateState extends State<AuthGate> {
     _access.state.addListener(_onAccessChanged);
     _bindFirebase();
     _load();
+    // Strict 3-second maximum: SplashScreen.hide() / the first real
+    // screen ALWAYS appears within 3 seconds, no matter how slow or
+    // broken Firebase / the network is.
+    _failsafe = Timer(const Duration(seconds: 3), _failsafeTimeout);
   }
 
   @override
   void dispose() {
+    _failsafe?.cancel();
     _access.state.removeListener(_onAccessChanged);
     super.dispose();
   }
 
+  /// The splash can no longer outlive this method.
+  void _failsafeTimeout() {
+    if (!mounted) return;
+    debugPrint('AuthGate failsafe fired - resolving splash after 3s');
+    // Stop waiting for authStateChanges: with no Firebase session
+    // (exactly the case right after Clear Data) the build below now
+    // shows the Login screen immediately.
+    _authChecked = true;
+    _loading = false;
+    setState(() {});
+    // Signed in but the users/{uid} verdict is still "checking"?
+    // Resolve from the cached snapshot / local marks - never hang.
+    if (SyncService.instance.fbReady &&
+        _fb?.currentUser != null &&
+        _access.state.value == AccessState.checking) {
+      unawaited(_access.resolveFromCacheNow());
+    }
+  }
+
   /// Re-reads local registration state. Safe to call any time; the
   /// Firebase listeners are bound exactly once (in initState).
+  /// Every failure lands in the finally block, so the splash ALWAYS
+  /// ends - an error here can never leave the app stuck on startup.
   Future<void> _load() async {
-    final sp = await SharedPreferences.getInstance();
-    _localRegistered = (sp.getString('reg_email') ??
-            sp.getString('reg_phone') ??
-            '')
-        .isNotEmpty;
-    _hasPin = await PinService.instance.hasPin;
-    if (mounted) setState(() => _loading = false);
-    if (!SyncService.instance.fbReady) {
-      SyncService.instance.syncSoon();
+    try {
+      final sp = await SharedPreferences.getInstance();
+      _localRegistered = (sp.getString('reg_email') ??
+              sp.getString('reg_phone') ??
+              '')
+          .isNotEmpty;
+      _hasPin = await PinService.instance.hasPin;
+      if (!SyncService.instance.fbReady) {
+        SyncService.instance.syncSoon();
+      }
+    } catch (e) {
+      debugPrint('local auth-state load failed: $e');
+    } finally {
+      _loading = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -86,19 +132,42 @@ class _AuthGateState extends State<AuthGate> {
       try {
         _fb = FirebaseAuth.instance;
         _fb!.authStateChanges().listen((user) {
-          _authChecked = true;
-          if (user != null) {
-            _access.startWatching(); // live kill-switch + offline cache
-            SyncService.instance.syncSoon();
-          } else {
-            _access.stopWatching();
-            _access.state.value = AccessState.signedOut;
+          try {
+            _authChecked = true;
+            if (user != null) {
+              _access.startWatching(); // live kill-switch + offline cache
+              SyncService.instance.syncSoon();
+            } else {
+              _access.stopWatching();
+              _access.state.value = AccessState.signedOut;
+            }
+          } catch (e) {
+            // user profile fetch / listener setup failed (offline,
+            // Clear Data, permissions): never keep the splash waiting.
+            debugPrint('auth state handling failed: $e');
+            if (_access.state.value == AccessState.checking) {
+              unawaited(_access.resolveFromCacheNow());
+            }
+          } finally {
+            _unlocked = false;
+            if (mounted) setState(() {});
           }
-          _unlocked = false;
+        }, onError: (Object e) {
+          // The auth STREAM itself errored - treat it like signed-out
+          // and let the failsafe / first emission recover later.
+          debugPrint('authStateChanges stream error: $e');
+          _authChecked = true;
+          if (_access.state.value == AccessState.checking) {
+            unawaited(_access.resolveFromCacheNow());
+          }
           if (mounted) setState(() {});
         });
-      } catch (_) {
+      } catch (e) {
+        debugPrint('FirebaseAuth unavailable: $e');
         _fb = null;
+        // Do NOT wait for a stream that will never be bound.
+        _authChecked = true;
+        if (mounted) setState(() {});
       }
     } else {
       _access.state.value = AccessState.allowed; // pure offline mode
