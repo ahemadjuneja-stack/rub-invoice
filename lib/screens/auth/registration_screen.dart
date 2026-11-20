@@ -145,6 +145,13 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             : 'Registered. Ruby Invoice is ready!',
       );
       widget.onDone();
+    } catch (e) {
+      // v0.2.19: registration must never die silently (PIN save, prefs).
+      debugPrint('[registration] failed: $e');
+      if (mounted) {
+        showSnack(context, 'Registration failed - please try again',
+            error: true);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

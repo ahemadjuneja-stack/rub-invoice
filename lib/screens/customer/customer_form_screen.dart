@@ -133,7 +133,18 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
         }
       }
       SyncService.instance.syncSoon();
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        showSnack(context, _isEdit ? 'Customer updated' : 'Customer saved');
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      // v0.2.19: a failed save used to reset silently - the user tapped
+      // SAVE and "nothing happened". Now it always tells them.
+      debugPrint('[customer] save failed: $e');
+      if (mounted) {
+        showSnack(context, 'Could not save customer - please try again',
+            error: true);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }

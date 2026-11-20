@@ -67,6 +67,11 @@ Future<void> main() async {
     } catch (e) {
       debugPrint('Firebase init failed or too slow, continuing offline: $e');
       fbReady = false;
+      // v0.2.19: boot failed on a dead-slow network? The app used to
+      // stay offline (no login, no cloud sync) for the WHOLE session.
+      // Now Firebase is retried in the background; the moment it is
+      // ready the login screen / sync appear automatically.
+      unawaited(_recoverFirebaseInBackground());
     }
   }
 
@@ -91,4 +96,26 @@ Future<void> main() async {
   // native splash - is reached within the 3-second budget no matter
   // what happened above.
   runApp(const RubyInvoiceApp());
+}
+
+/// Boot-time Firebase init failed or was cut by the 3s budget.
+/// Retry in the background with generous timeouts; when it succeeds,
+/// re-wire sync + remote config and notify the UI (AuthGate listens
+/// to SyncService.fbReadyNotifier and shows the login screen).
+Future<void> _recoverFirebaseInBackground() async {
+  for (int i = 1; i <= 3; i++) {
+    await Future<void>.delayed(Duration(seconds: 4 * i));
+    try {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.current)
+          .timeout(const Duration(seconds: 12));
+      FirebaseFirestore.instance.settings =
+          const Settings(persistenceEnabled: true);
+      await SyncService.instance.configure(fbReady: true);
+      await RemoteConfigService.instance.init(fbReady: true);
+      debugPrint('Firebase recovered in background - login + sync live');
+      return;
+    } catch (e) {
+      debugPrint('Firebase background retry $i failed: $e');
+    }
+  }
 }

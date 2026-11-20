@@ -62,3 +62,5 @@ and the SAME app logo. It reads/manages ONLY the `users` and
 | `manifest.json` | PWA manifest (icon, standalone, colors) |
 | `sw.js` | Service worker (offline shell cache) |
 | `icons/` | App logo 192/512 |
+
+Pages deploy trigger: 2026-11-20 (source enabled by owner).

@@ -63,6 +63,10 @@ class RemoteConfigService {
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
 
   Future<void> init({required bool fbReady}) async {
+    // Re-init safe (boot + background recovery): drop the old listener
+    // first so wires are never duplicated.
+    _sub?.cancel();
+    _sub = null;
     // Offline-first: restore the last-known config before any network.
     final sp = await SharedPreferences.getInstance();
     final cached = sp.getString('remote_config_v1');

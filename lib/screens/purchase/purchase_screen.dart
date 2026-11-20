@@ -457,6 +457,12 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
         showSnack(context, 'Purchase saved');
         Navigator.pop(context);
       }
+    } catch (e) {
+      // v0.2.19: never fail silently.
+      if (mounted) {
+        showSnack(context, 'Purchase could not be saved - please try again',
+            error: true);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }

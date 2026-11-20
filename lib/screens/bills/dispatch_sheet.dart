@@ -188,6 +188,12 @@ class _DispatchSheetState extends State<_DispatchSheet> {
         _photoChanged = false;
       });
       showSnack(context, 'Delivery details saved');
+    } catch (e) {
+      // v0.2.19: never fail silently.
+      if (mounted) {
+        showSnack(context, 'Could not save delivery details - try again',
+            error: true);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }

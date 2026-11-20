@@ -32,10 +32,18 @@ class SyncService {
 
   final ValueNotifier<SyncStatus> status = ValueNotifier<SyncStatus>(SyncStatus.offline);
 
+  /// v0.2.19: flips true when Firebase becomes ready - including when
+  /// the boot-time init failed on a slow network and the background
+  /// recovery (_recoverFirebaseInBackground in main.dart) succeeded
+  /// later. AuthGate listens to this and shows the login screen the
+  /// moment cloud features come alive.
+  final ValueNotifier<bool> fbReadyNotifier = ValueNotifier<bool>(false);
+
   bool _fbReady = false;
   bool _busy = false;
   Timer? _timer;
   StreamSubscription<List<ConnectivityResult>>? _connSub;
+  StreamSubscription<dynamic>? _authSub;
 
   bool get fbReady => _fbReady;
 
@@ -48,8 +56,17 @@ class SyncService {
     }
   }
 
+  /// Safe to call multiple times (boot + background recovery): old
+  /// listeners are cancelled first, so wires are never duplicated.
   Future<void> configure({required bool fbReady}) async {
     _fbReady = fbReady;
+    fbReadyNotifier.value = fbReady;
+    _timer?.cancel();
+    _timer = null;
+    await _connSub?.cancel();
+    _connSub = null;
+    await _authSub?.cancel();
+    _authSub = null;
     if (!_fbReady) {
       status.value = SyncStatus.offline;
       return;
@@ -58,7 +75,7 @@ class SyncService {
       final online = results.any((r) => r != ConnectivityResult.none);
       if (online) syncNow();
     });
-    FirebaseAuth.instance.authStateChanges().listen((user) {
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       _timer?.cancel();
       if (user != null) {
         syncNow();
@@ -66,7 +83,7 @@ class SyncService {
       } else {
         status.value = SyncStatus.offline;
       }
-    });
+    }, onError: (e) => debugPrint('[sync] auth stream error: $e'));
   }
 
   /// Fire-and-forget; call after every local mutation.

@@ -60,6 +60,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _loading = true;
   bool _gating = false;
 
+  /// v0.2.19: set when the data load fails - the list then shows a
+  /// retry banner instead of a spinner that spins forever.
+  String? _loadError;
+
   @override
   void initState() {
     super.initState();
@@ -96,19 +100,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _reload() async {
-    final keys = [Dt.todayKey(), Dt.yesterdayKey()];
-    final bills = await Repo.instance.billsForDays(keys);
-    final cities = await Repo.instance.citiesFor(
-      bills.values.expand((l) => l).map((b) => b.customerId),
-    );
-    final draft = await BillDraftService.instance.load();
-    if (!mounted) return;
-    setState(() {
-      _bills = bills;
-      _cities = cities;
-      _draft = (draft != null && draft.lines.isNotEmpty) ? draft : null;
-      _loading = false;
-    });
+    // v0.2.19: a failed DB read must NEVER leave the spinner spinning
+    // forever (the exact bug users reported). Every path ends with
+    // _loading = false and a visible error banner with a retry button.
+    try {
+      final keys = [Dt.todayKey(), Dt.yesterdayKey()];
+      final bills = await Repo.instance.billsForDays(keys);
+      final cities = await Repo.instance.citiesFor(
+        bills.values.expand((l) => l).map((b) => b.customerId),
+      );
+      final draft = await BillDraftService.instance.load();
+      if (!mounted) return;
+      setState(() {
+        _bills = bills;
+        _cities = cities;
+        _draft = (draft != null && draft.lines.isNotEmpty) ? draft : null;
+        _loadError = null;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('[home] reload failed: $e');
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Data could not load';
+        _loading = false;
+      });
+    }
     SyncService.instance.syncSoon();
     unawaited(_refreshAvailableTag());
     _flushDeferredUpdate();
@@ -667,6 +684,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         children: [
           _noticeBanner(rc),
           _updateBanner(),
+          if (_loadError != null) _loadErrorBanner(),
           if (_draft != null) _draftBanner(_draft!),
           for (final key in [today, yesterday]) ...[
             SectionHeader(Dt.labelFor(key)),
@@ -683,6 +701,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ],
           const SizedBox(height: 24),
         ],
+      ),
+    );
+  }
+
+  /// v0.2.19: visible failure state with a retry - a broken load can
+  /// never again look like the app silently does nothing.
+  Widget _loadErrorBanner() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Ruby.ruby, width: 1.2),
+      ),
+      child: ListTile(
+        dense: true,
+        leading: const Icon(Icons.error_outline, color: Ruby.ruby),
+        title: const Text(
+          'Data could not load',
+          style: TextStyle(
+              fontSize: 13.5, fontWeight: FontWeight.w800, color: Ruby.ink),
+        ),
+        subtitle: const Text(
+          'Your data is safe on this phone. Tap retry.',
+          style: TextStyle(fontSize: 12, color: Ruby.muted),
+        ),
+        trailing: TextButton(
+          onPressed: () {
+            setState(() {
+              _loading = true;
+              _loadError = null;
+            });
+            _reload();
+          },
+          child: const Text('RETRY', style: TextStyle(color: Ruby.ruby)),
+        ),
       ),
     );
   }

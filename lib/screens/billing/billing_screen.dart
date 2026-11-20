@@ -316,24 +316,36 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
     }
     setState(() => _saving = true);
     try {
+      // v0.2.19: the DB save itself is guarded separately - if it fails
+      // the user is told, the cart stays intact and nothing else runs.
       final Bill bill;
-      if (_isEdit) {
-        // Pen-edit of a saved bill: same invoice number; items, stock,
-        // payment and ledger are all recomputed by the repository.
-        bill = await _repo.updateBill(
-          existing: widget.editBill!,
-          lines: _cart,
-          paidNowPaise: paid,
-          billDate: _billDate,
-        );
-      } else {
-        bill = await _repo.saveBill(
-          customerId: widget.customer.id,
-          customerName: widget.customer.name,
-          lines: _cart,
-          paidNowPaise: paid,
-          billDate: _billDate,
-        );
+      try {
+        if (_isEdit) {
+          // Pen-edit of a saved bill: same invoice number; items, stock,
+          // payment and ledger are all recomputed by the repository.
+          bill = await _repo.updateBill(
+            existing: widget.editBill!,
+            lines: _cart,
+            paidNowPaise: paid,
+            billDate: _billDate,
+          );
+        } else {
+          bill = await _repo.saveBill(
+            customerId: widget.customer.id,
+            customerName: widget.customer.name,
+            lines: _cart,
+            paidNowPaise: paid,
+            billDate: _billDate,
+          );
+        }
+      } catch (e) {
+        debugPrint('[billing] save failed: $e');
+        if (mounted) {
+          showSnack(context,
+              'Bill could not be saved - items are safe, try again',
+              error: true);
+        }
+        return;
       }
       // The bill is now safely in the database. Empty the cart FIRST so
       // that dispose / lifecycle hooks can never re-persist the saved
@@ -363,6 +375,11 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
       } else {
         Navigator.of(context).popUntil((r) => r.isFirst);
       }
+    } catch (e) {
+      // The bill IS saved at this point - only the display/navigation
+      // step failed. Land the user on the home list, never strand them.
+      debugPrint('[billing] post-save step failed: $e');
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
     } finally {
       if (mounted) setState(() => _saving = false);
     }

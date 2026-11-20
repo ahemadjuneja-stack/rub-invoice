@@ -58,6 +58,16 @@ class _AuthGateState extends State<AuthGate> {
   /// splash itself instead of waiting on Firebase / the network.
   Timer? _failsafe;
 
+  /// v0.2.19: Firebase can come alive AFTER boot (background recovery
+  /// on a slow network). When it does, re-evaluate the routing so the
+  /// login screen / cloud sync appear without a restart.
+  void _onFbReadyFlip() {
+    if (!mounted) return;
+    _listenersBound = false; // re-bind Firebase listeners for the new mode
+    _bindFirebase();
+    unawaited(_load());
+  }
+
   /// Set on the first authStateChanges emission. Until then a Firebase
   /// login is being RESTORED (this survives APK updates) - the splash
   /// must stay up instead of flashing the registration screen.
@@ -68,6 +78,7 @@ class _AuthGateState extends State<AuthGate> {
     super.initState();
     _access = AccessService.instance;
     _access.state.addListener(_onAccessChanged);
+    SyncService.instance.fbReadyNotifier.addListener(_onFbReadyFlip);
     _bindFirebase();
     _load();
     // Strict 3-second maximum: SplashScreen.hide() / the first real
@@ -80,6 +91,7 @@ class _AuthGateState extends State<AuthGate> {
   void dispose() {
     _failsafe?.cancel();
     _access.state.removeListener(_onAccessChanged);
+    SyncService.instance.fbReadyNotifier.removeListener(_onFbReadyFlip);
     super.dispose();
   }
 

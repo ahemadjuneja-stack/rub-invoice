@@ -64,6 +64,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       showSnack(context, 'Bill format saved');
       Navigator.pop(context);
+    } catch (e) {
+      // v0.2.19: never fail silently.
+      if (mounted) {
+        showSnack(context, 'Could not save - please try again', error: true);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }

@@ -278,7 +278,16 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         );
       }
       SyncService.instance.syncSoon();
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        showSnack(context, _isEdit ? 'Product updated' : 'Product saved');
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      // v0.2.19: never fail silently.
+      if (mounted) {
+        showSnack(context, 'Could not save product - please try again',
+            error: true);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
