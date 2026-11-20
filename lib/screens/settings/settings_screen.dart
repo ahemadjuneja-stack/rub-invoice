@@ -19,7 +19,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _phoneC = TextEditingController();
   final _gstinC = TextEditingController();
 
-  String _format = 't80'; // t80 | a5
+  String _format = 'a4'; // a4 | t80 | a5
   bool _saving = false;
   bool _loading = true;
 
@@ -46,7 +46,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _addrC.text = shop['shop_addr'] ?? '';
       _phoneC.text = shop['shop_phone'] ?? '';
       _gstinC.text = shop['gstin'] ?? '';
-      _format = shop['bill_format'] == 'a5' ? 'a5' : 't80';
+      _format = switch (shop['bill_format']) {
+        'a5' => 'a5',
+        't80' => 't80',
+        _ => 'a4', // default: A4 memo
+      };
       _loading = false;
     });
   }
@@ -114,6 +118,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 20),
                 const SectionHeader('Bill paper size', color: Ruby.ruby),
                 _formatTile(
+                  'a4',
+                  'A4 memo (default)',
+                  'Full-page paper memo - business logo, 25 items per page, signature',
+                  Icons.picture_as_pdf_outlined,
+                ),
+                const SizedBox(height: 8),
+                _formatTile(
                   't80',
                   '80mm receipt',
                   'Small thermal-printer style slip - shop name, items, total',
@@ -124,7 +135,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   'a5',
                   'A5 letterhead',
                   'Full bill - header, item table, balance line, signature area',
-                  Icons.picture_as_pdf_outlined,
+                  Icons.article_outlined,
                 ),
                 const SizedBox(height: 26),
                 ElevatedButton(

@@ -76,6 +76,13 @@ class _BillViewScreenState extends State<BillViewScreen> {
 
   Future<void> _share() async {
     if (_bill == null) return;
+    // DEBIT MEMO vs CASH MEMO: a bill whose amount was fully received
+    // (cash/jama) prints as CASH MEMO, anything with balance left prints
+    // as DEBIT MEMO - exactly like the paper memos.
+    int paidOnBill = 0;
+    try {
+      paidOnBill = await Repo.instance.paidWithBill(_bill!.id);
+    } catch (_) {}
     await PdfService.instance.shareBill(
       bill: _bill!,
       items: _items,
@@ -83,6 +90,7 @@ class _BillViewScreenState extends State<BillViewScreen> {
       customerCity: _city,
       customerPhone: _phone,
       balanceAfterPaise: _balanceAfter,
+      isCashMemo: paidOnBill >= _bill!.totalPaise,
     );
   }
 

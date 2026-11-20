@@ -970,7 +970,7 @@ class Repo {
     final keys = ['shop_name', 'shop_addr', 'shop_phone', 'gstin', 'bill_format'];
     final out = <String, String>{};
     for (final k in keys) {
-      out[k] = await getMeta(k) ?? (k == 'bill_format' ? 't80' : '');
+      out[k] = await getMeta(k) ?? (k == 'bill_format' ? 'a4' : '');
     }
     return out;
   }

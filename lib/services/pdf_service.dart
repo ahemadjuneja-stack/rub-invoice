@@ -1,15 +1,25 @@
 import 'dart:io';
 
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
+import '../core/app_log.dart';
 import '../core/formatters.dart';
 import '../models/models.dart';
 
-/// Bill PDFs in two formats: 80mm thermal receipt and A5 letterhead.
+/// Bill PDFs in three formats:
+///   * A4 MEMO (default, v0.3.0) - the classic Shivam-style paper memo:
+///     business logo printed black & white at the top, DEBIT MEMO /
+///     CASH MEMO title by bill type, numbered item table with exactly
+///     25 items per page (extra items flow to continuation pages),
+///     grand total + discount box, signature at the bottom when one is
+///     uploaded in Business Profile.
+///   * A5 letterhead.
+///   * 80mm thermal receipt.
 /// DejaVu fonts are bundled (assets/fonts/) so the rupee symbol prints
 /// correctly on every device.
 class PdfService {
@@ -19,10 +29,54 @@ class PdfService {
   pw.Font? _regular;
   pw.Font? _bold;
 
+  /// Number of pages the last built bill got (test contract: the A4
+  /// memo paginates at exactly 25 item lines per page).
+  int _lastPageCount = 0;
+  int get lastPageCount => _lastPageCount;
+
   Future<void> _loadFonts() async {
     if (_regular != null) return;
     _regular = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     _bold = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'));
+  }
+
+  /// Loads an image file and converts it to BLACK & WHITE (grayscale) -
+  /// the printed memo always looks like ink on paper, whatever colours
+  /// the uploaded logo / signature have. Returns null when missing/broken.
+  pw.ImageProvider? _bwImage(String path) {
+    try {
+      if (path.isEmpty) return null;
+      final f = File(path);
+      if (!f.existsSync()) return null;
+      final decoded = img.decodeImage(f.readAsBytesSync());
+      if (decoded == null) return null;
+      final gray = img.grayscale(decoded);
+      final bytes = img.encodePng(gray);
+      if (bytes.isEmpty) return null;
+      return pw.MemoryImage(bytes);
+    } catch (e) {
+      appLog('[pdf] logo/signature load failed: $e');
+      return null;
+    }
+  }
+
+  /// Reads the locally stored business branding (Business Profile ->
+  /// Branding: business_assets/logo.jpg + signature.jpg). Needs the app
+  /// documents directory, so this is async and called once per share.
+  Future<(pw.ImageProvider?, pw.ImageProvider?)> loadBranding() async {
+    pw.ImageProvider? logo;
+    pw.ImageProvider? sign;
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory('${docs.path}${Platform.pathSeparator}business_assets');
+      final logoFile = File('${dir.path}${Platform.pathSeparator}logo.jpg');
+      final signFile = File('${dir.path}${Platform.pathSeparator}signature.jpg');
+      if (logoFile.existsSync()) logo = _bwImage(logoFile.path);
+      if (signFile.existsSync()) sign = _bwImage(signFile.path);
+    } catch (e) {
+      appLog('[pdf] branding load failed: $e');
+    }
+    return (logo, sign);
   }
 
   Future<File> buildBillFile({
@@ -32,9 +86,10 @@ class PdfService {
     String customerCity = '',
     String customerPhone = '',
     int balanceAfterPaise = 0,
+    bool isCashMemo = false,
   }) async {
     await _loadFonts();
-    final isA5 = (shop['bill_format'] ?? 't80') == 'a5';
+    final format = shop['bill_format'] ?? 'a4';
 
     final doc = pw.Document(
       theme: pw.ThemeData.withFont(base: _regular!, bold: _bold!),
@@ -47,16 +102,31 @@ class PdfService {
     final shopPhone = shop['shop_phone'] ?? '';
     final gstin = shop['gstin'] ?? '';
 
-    if (isA5) {
+    final (logo, sign) = await loadBranding();
+
+    if (format == 'a4') {
+      final pages = _a4MemoPages(
+        bill, items, shopName, shopAddr, shopPhone, gstin,
+        customerCity, customerPhone, balanceAfterPaise,
+        isCashMemo, logo, sign,
+      );
+      _lastPageCount = pages.length;
+      for (final page in pages) {
+        doc.addPage(page);
+      }
+    } else if (format == 'a5') {
+      _lastPageCount = 1;
       doc.addPage(_a5Page(bill, items, shopName, shopAddr, shopPhone, gstin,
           customerCity, customerPhone, balanceAfterPaise));
     } else {
+      _lastPageCount = 1;
       doc.addPage(_thermalPage(bill, items, shopName, shopAddr, shopPhone, gstin,
           customerCity, customerPhone, balanceAfterPaise));
     }
 
     final dir = await getTemporaryDirectory();
-    final f = File('${dir.path}/bill_${bill.billNo}_${bill.billDay}.pdf');
+    final memoKind = isCashMemo ? 'cash' : 'bill';
+    final f = File('${dir.path}/${memoKind}_${bill.billNo}_${bill.billDay}.pdf');
     await f.writeAsBytes(await doc.save());
     return f;
   }
@@ -68,6 +138,7 @@ class PdfService {
     String customerCity = '',
     String customerPhone = '',
     int balanceAfterPaise = 0,
+    bool isCashMemo = false,
   }) async {
     final f = await buildBillFile(
       bill: bill,
@@ -76,11 +147,314 @@ class PdfService {
       customerCity: customerCity,
       customerPhone: customerPhone,
       balanceAfterPaise: balanceAfterPaise,
+      isCashMemo: isCashMemo,
     );
     await Share.shareXFiles(
       [XFile(f.path)],
       subject: 'Bill #${bill.billNo} - ${bill.customerName}',
       text: 'Bill #${bill.billNo} - ${Money.fmt(bill.totalPaise)}',
+    );
+  }
+
+  // ================= A4 memo (default, Shivam-style) =================
+
+  /// Exactly 25 item lines per page - the 26th product opens page 2,
+  /// the 51st page 3, and so on (classic paper memo behaviour).
+  static const int _a4ItemsPerPage = 25;
+
+  List<pw.Page> _a4MemoPages(
+    Bill bill,
+    List<BillItem> items,
+    String shopName,
+    String shopAddr,
+    String shopPhone,
+    String gstin,
+    String customerCity,
+    String customerPhone,
+    int balanceAfterPaise,
+    bool isCashMemo,
+    pw.ImageProvider? logo,
+    pw.ImageProvider? sign,
+  ) {
+    final title = isCashMemo ? 'CASH MEMO' : 'DEBIT MEMO';
+    final pages = <pw.Page>[];
+    final chunks = <List<BillItem>>[];
+    for (var i = 0; i < items.length; i += _a4ItemsPerPage) {
+      chunks.add(items.sublist(
+          i, (i + _a4ItemsPerPage) > items.length ? items.length : (i + _a4ItemsPerPage)));
+    }
+
+    for (var p = 0; p < chunks.length; p++) {
+      final last = p == chunks.length - 1;
+      final pageNo = p + 1;
+      final pageTotal = chunks.length;
+
+      pages.add(pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.fromLTRB(28, 26, 28, 24),
+        build: (_) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            // ---------- memo header ----------
+            pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                if (logo != null)
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(right: 12),
+                    child: pw.Image(logo, height: 62, fit: pw.BoxFit.contain),
+                  ),
+                pw.Expanded(
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(shopName.toUpperCase(),
+                          style: pw.TextStyle(
+                              fontSize: 15, fontWeight: pw.FontWeight.bold)),
+                      if (shopAddr.isNotEmpty)
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.only(top: 1),
+                          child: pw.Text(shopAddr,
+                              style: const pw.TextStyle(fontSize: 8.5)),
+                        ),
+                      pw.Text(
+                        [
+                          if (shopPhone.isNotEmpty) 'Ph: $shopPhone',
+                          if (gstin.isNotEmpty) 'GSTIN: $gstin',
+                        ].join('   '),
+                        style: const pw.TextStyle(fontSize: 8.5),
+                      ),
+                    ],
+                  ),
+                ),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.Text(title,
+                        style: pw.TextStyle(
+                            fontSize: 16, fontWeight: pw.FontWeight.bold,
+                            letterSpacing: 1.2)),
+                    pw.Text('Memo No: ${bill.billNo}',
+                        style: const pw.TextStyle(fontSize: 9.5)),
+                    pw.Text(Dt.fmtDayKey(bill.billDay),
+                        style: const pw.TextStyle(fontSize: 9.5)),
+                  ],
+                ),
+              ],
+            ),
+            pw.Container(
+              margin: const pw.EdgeInsets.symmetric(vertical: 7),
+              height: 1.2,
+              color: PdfColors.black,
+            ),
+            // ---------- party box ----------
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(8),
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(width: 0.8),
+                borderRadius:
+                    const pw.BorderRadius.all(pw.Radius.circular(4)),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('BILL TO',
+                      style: pw.TextStyle(
+                          fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(bill.customerName,
+                      style: pw.TextStyle(
+                          fontSize: 11.5, fontWeight: pw.FontWeight.bold)),
+                  if (customerCity.isNotEmpty || customerPhone.isNotEmpty)
+                    pw.Text(
+                      [customerCity, customerPhone]
+                          .where((e) => e.isNotEmpty)
+                          .join('   |   '),
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 8),
+            // ---------- item table (25 rows per page) ----------
+            pw.Text(
+              pageTotal > 1 ? 'Items (page $pageNo of $pageTotal)' : 'Items',
+              style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 3),
+            _a4ItemTable(chunks[p], p * _a4ItemsPerPage),
+            if (last) ...[
+              pw.SizedBox(height: 10),
+              // ---------- totals ----------
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Received the above goods in good condition.',
+                            style: const pw.TextStyle(fontSize: 8.5)),
+                        if (bill.note.isNotEmpty)
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.only(top: 4),
+                            child: pw.Text('Note: ${bill.note}',
+                                style: const pw.TextStyle(fontSize: 8.5)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: [
+                      if (bill.discountPaise > 0) ...[
+                        pw.Row(mainAxisAlignment: pw.MainAxisAlignment.end, children: [
+                          pw.Text('Subtotal',
+                              style: pw.TextStyle(
+                                  fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                          pw.SizedBox(width: 14),
+                          pw.Text(Money.fmt(bill.subtotalPaise),
+                              style: const pw.TextStyle(fontSize: 10)),
+                        ]),
+                        pw.Row(mainAxisAlignment: pw.MainAxisAlignment.end, children: [
+                          pw.Text('Trade discount',
+                              style: const pw.TextStyle(fontSize: 10)),
+                          pw.SizedBox(width: 14),
+                          pw.Text('- ${Money.fmt(bill.discountPaise)}',
+                              style: const pw.TextStyle(fontSize: 10)),
+                        ]),
+                        pw.SizedBox(height: 3),
+                      ],
+                      pw.Container(
+                        width: 190,
+                        padding: const pw.EdgeInsets.symmetric(
+                            vertical: 6, horizontal: 9),
+                        decoration: pw.BoxDecoration(
+                          border: pw.Border.all(width: 1),
+                          borderRadius: const pw.BorderRadius.all(
+                              pw.Radius.circular(4)),
+                          color: PdfColors.grey100,
+                        ),
+                        child: pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pw.Text('GRAND TOTAL',
+                                style: pw.TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: pw.FontWeight.bold)),
+                            pw.Text(Money.fmt(bill.totalPaise),
+                                style: pw.TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: pw.FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                      if (balanceAfterPaise > 0)
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.only(top: 4),
+                          child: pw.Text(
+                            'Balance due (all bills): ${Money.fmt(balanceAfterPaise)}',
+                            style: pw.TextStyle(
+                                fontSize: 8.5,
+                                fontWeight: pw.FontWeight.bold),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+              pw.Spacer(),
+              // ---------- signature ----------
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.end,
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Column(
+                    children: [
+                      if (sign != null)
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.only(bottom: 2),
+                          child: pw.Image(sign, height: 46,
+                              fit: pw.BoxFit.contain),
+                        ),
+                      pw.Container(
+                        width: 150,
+                        decoration: const pw.BoxDecoration(
+                            border: pw.Border(
+                                bottom: pw.BorderSide(width: 0.8))),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text('For $shopName',
+                          style: pw.TextStyle(
+                              fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
+                      pw.Text('Authorised Signatory',
+                          style: const pw.TextStyle(fontSize: 7.5)),
+                    ],
+                  ),
+                ],
+              ),
+            ] else ...[
+              pw.Spacer(),
+              pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Text('Continued on next page...',
+                    style: const pw.TextStyle(fontSize: 8.5)),
+              ),
+            ],
+            pw.Spacer(),
+            // ---------- memo footer ----------
+            pw.Container(
+              margin: const pw.EdgeInsets.only(top: 6),
+              decoration: const pw.BoxDecoration(
+                  border: pw.Border(
+                      top: pw.BorderSide(width: 0.6))),
+            ),
+            pw.SizedBox(height: 4),
+            pw.Center(
+              child: pw.Text(
+                [
+                  if (shopPhone.isNotEmpty) shopPhone,
+                  'Powered by Ruby Invoice',
+                ].join('   |   '),
+                style: const pw.TextStyle(fontSize: 7.5),
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+    return pages;
+  }
+
+  pw.Widget _a4ItemTable(List<BillItem> items, int startNo) {
+    return pw.TableHelper.fromTextArray(
+      headers: ['#', 'Product', 'Qty', 'Rate', 'Amount'],
+      data: [
+        for (var i = 0; i < items.length; i++)
+          [
+            '${startNo + i + 1}',
+            items[i].productName,
+            _qtyText(items[i].qty),
+            Money.fmt(items[i].ratePaise, withSymbol: false),
+            Money.fmt(items[i].amountPaise, withSymbol: false),
+          ]
+      ],
+      columnWidths: const {
+        0: pw.FixedColumnWidth(30),
+        1: pw.FlexColumnWidth(5.2),
+        2: pw.FlexColumnWidth(1.6),
+        3: pw.FlexColumnWidth(2.1),
+        4: pw.FlexColumnWidth(2.5),
+      },
+      headerStyle: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+      cellStyle: const pw.TextStyle(fontSize: 9.5),
+      cellAlignment: pw.Alignment.centerLeft,
+      headerAlignment: pw.Alignment.centerLeft,
+      headerDecoration:
+          const pw.BoxDecoration(color: PdfColors.grey200),
+      border: pw.TableBorder.all(width: 0.6),
+      cellPadding:
+          const pw.EdgeInsets.symmetric(vertical: 3.5, horizontal: 6),
     );
   }
 
