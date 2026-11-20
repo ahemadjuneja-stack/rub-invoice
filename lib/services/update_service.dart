@@ -18,6 +18,8 @@ class UpdateService {
   UpdateService._();
   static final UpdateService instance = UpdateService._();
 
+  static const repoBase =
+      'https://github.com/ahemadjuneja-stack/rub-invoice/releases';
   static const repoApi =
       'https://api.github.com/repos/ahemadjuneja-stack/rub-invoice/releases/latest';
 
@@ -26,6 +28,11 @@ class UpdateService {
 
   /// Latest release tag without the leading 'v' (after a successful check).
   String? get latestTag => _latestTag;
+
+  /// Direct browser download URL of the release APK (null when no
+  /// release is known yet). Used as the "Download in browser" plan B
+  /// when the in-app installer cannot open on the phone.
+  String? get apkDirectUrl => _apkUrl;
 
   /// Set when a download attempt failed (used to show a Retry button).
   String? lastError;
@@ -41,21 +48,80 @@ class UpdateService {
 
   Future<(bool hasUpdate, String latestTag)> check() async {
     final info = await PackageInfo.fromPlatform();
-    final res = await http.get(
-      Uri.parse(repoApi),
-      headers: {'Accept': 'application/vnd.github+json'},
-    );
-    if (res.statusCode != 200) {
-      throw Exception('GitHub API error ${res.statusCode}');
+    String latest = '';
+    String? apk;
+    // Primary: the GitHub REST API (same as before).
+    try {
+      final res = await http
+          .get(
+            Uri.parse(repoApi),
+            headers: {'Accept': 'application/vnd.github+json'},
+          )
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode == 200) {
+        final body = jsonDecode(res.body) as Map<String, dynamic>;
+        latest = ((body['tag_name'] ?? '') as String)
+            .replaceFirst(RegExp(r'^v'), '')
+            .trim();
+        apk = _firstApkUrl(body);
+      }
+    } catch (e) {
+      debugPrint('GitHub API check failed, trying atom fallback: $e');
     }
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
-    final tag = (body['tag_name'] ?? '') as String;
-    final latest = tag.replaceFirst(RegExp(r'^v'), '').trim();
-    _latestTag = latest.isEmpty ? null : latest;
-    _apkUrl = _firstApkUrl(body);
+    // RELIABILITY FALLBACK (fix: "naya update nahi aa raha"): the API
+    // above is rate-limited per IP (60/hour) - shared mobile CGNAT IPs
+    // can silently exhaust it. The releases.atom feed and the
+    // expanded_assets page have NO rate limit, so the check survives.
+    if (latest.isEmpty) {
+      try {
+        final (t, a) = await _checkViaAtom();
+        latest = t;
+        apk = a;
+      } catch (e) {
+        debugPrint('atom fallback failed too: $e');
+      }
+    }
+    if (latest.isEmpty) {
+      throw Exception('Update check failed (no network / GitHub down)');
+    }
+    _latestTag = latest;
+    _apkUrl = apk;
     // Always return the clean tag (no leading 'v') - callers display
     // 'v$tag' themselves and compare it with the installed version.
     return (_isNewer(latest, info.version), latest);
+  }
+
+  /// No-rate-limit path: releases.atom lists the newest release first;
+  /// the APK URL comes from the public expanded_assets HTML page.
+  Future<(String tag, String? apk)> _checkViaAtom() async {
+    final res = await http
+        .get(
+          Uri.parse('$repoBase.atom'),
+          headers: {'Accept': 'application/atom+xml'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (res.statusCode != 200) throw Exception('atom ${res.statusCode}');
+    final m = RegExp(r'href="[^"]*/tag/([^"]+)"').firstMatch(res.body);
+    final clean = (m?.group(1) ?? '').replaceFirst(RegExp(r'^v'), '').trim();
+    if (clean.isEmpty) throw Exception('atom: no release tag found');
+    final apk = await _apkUrlFromAssets(clean);
+    return (clean, apk);
+  }
+
+  /// Scrapes the release's expanded_assets page for the .apk link
+  /// (the same page GitHub serves below every release on the web).
+  Future<String?> _apkUrlFromAssets(String clean) async {
+    if (clean.isEmpty) return null;
+    try {
+      final res = await http
+          .get(Uri.parse('$repoBase/expanded_assets/v$clean'))
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return null;
+      final m = RegExp(r'href="([^"]*\.apk)"').firstMatch(res.body);
+      return m == null ? null : 'https://github.com${m.group(1)}';
+    } catch (_) {
+      return null;
+    }
   }
 
   String? _firstApkUrl(Map<String, dynamic> body) {

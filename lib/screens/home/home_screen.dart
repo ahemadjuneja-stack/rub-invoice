@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
@@ -255,6 +256,74 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return snoozeTag == tag && now < snoozeUntil;
   }
 
+  /// Plan B when the system installer did not open. The most common
+  /// cause: the "Install unknown apps" permission is missing - and it
+  /// RESETS after Clear Data, the exact case users report as "update
+  /// install nahi ho raha". Guide the user through the two taps and
+  /// offer the plain browser download as a second way out.
+  void _showInstallHelp(BuildContext dialogCtx) {
+    showDialog<void>(
+      context: dialogCtx,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.white,
+        elevation: 12,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.shield_outlined, color: Ruby.ruby, size: 24),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'One permission needed',
+                style: const TextStyle(
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w800,
+                    color: Ruby.ink),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Android needs "Allow from this source" to install the update:\n\n'
+          '1. Tap Install now again\n'
+          '2. Android shows the permission screen -> turn it ON\n'
+          '3. Come back and tap Install now\n\n'
+          'If it still does not open, download the update in your browser '
+          'and tap the downloaded file to install.',
+          style: TextStyle(
+              fontSize: 13.5, height: 1.5, color: Ruby.muted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _openApkInBrowser();
+            },
+            child: const Text('Download in browser',
+                style: TextStyle(color: Ruby.ruby)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(backgroundColor: Ruby.ruby),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Opens the release APK link in the external browser - a way to
+  /// install that always works even when the in-app installer cannot.
+  Future<void> _openApkInBrowser() async {
+    final url = UpdateService.instance.apkDirectUrl;
+    if (url == null || url.isEmpty) return;
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // browser not available - nothing else to do here
+    }
+  }
+
   /// Silent update check - runs on app open, on every resume and every
   /// 20 minutes while the app stays open (throttled to once per 15
   /// minutes). If a newer release is out, its APK starts downloading in
@@ -424,7 +493,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             width: double.infinity,
                             height: 46,
                             child: ElevatedButton.icon(
-                              onPressed: () => UpdateService.instance.install(),
+                              onPressed: () async {
+                                final ok =
+                                    await UpdateService.instance.install();
+                                if (!ok && mounted && context.mounted) {
+                                  _showInstallHelp(ctx);
+                                }
+                              },
                               icon: const Icon(Icons.install_mobile, size: 20),
                               label: const Text('Install now'),
                             ),

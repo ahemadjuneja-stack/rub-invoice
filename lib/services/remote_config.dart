@@ -25,11 +25,18 @@ class RemoteConfig {
   final String minVersion;
   final Map<String, bool> features;
   final bool autoApprove;
+
+  /// Support WhatsApp number (10 digits, editable from the Ruby Key
+  /// Remote Control panel). When empty the lock screens show the
+  /// Gmail/email button instead. Remote value wins over the
+  /// compile-time AppConstants.supportWhatsApp fallback.
+  final String supportMobile;
   const RemoteConfig({
     this.notice = '',
     this.minVersion = '',
     this.features = const {},
     this.autoApprove = true,
+    this.supportMobile = '',
   });
 
   /// Flags default to ON - the admin only lists overrides for features
@@ -42,6 +49,7 @@ class RemoteConfig {
         features: ((data['features'] ?? const {}) as Map)
             .map((k, v) => MapEntry(k.toString(), v == true)),
         autoApprove: (data['auto_approve'] ?? true) == true,
+        supportMobile: (data['support_mobile'] ?? '') as String,
       );
 }
 

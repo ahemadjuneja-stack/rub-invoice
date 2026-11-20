@@ -55,3 +55,38 @@ read (flags hold no private data, and they apply even before sign-in),
 only the Admin UID can write. Publish the rules once after adding it.
 The Firebase Console document editor always bypasses rules, so the admin
 can edit `config/app` even from a fresh phone.
+
+## Ruby Key panel - Remote Control card (the easy way)
+
+You do NOT need the Firebase Console anymore. Open **Ruby Key**
+(`https://ahemadjuneja-stack.github.io/rub-invoice/` on
+your phone), log in with the admin Gmail and tap the **REMOTE CONTROL**
+card. The form saves straight to `config/app` and every installed app
+picks the change up within seconds:
+
+| Control | What it does |
+| --- | --- |
+| Announcement banner | Yellow notice on the Billing tab. Empty = hidden. |
+| Force-update gate (min version) | Phones older than this version MUST update - the app opens a non-dismissable update popup with background download. |
+| Support WhatsApp number | 10 digits - the lock screens (blocked/expired/device limit) show a WhatsApp Support button instead of email. |
+| Ledger / Inventory / Reports / Backup switches | Hide/show those menu tiles for everyone. |
+| Auto-approve new shops | ON = new registrations start billing instantly; OFF = they wait for your approval. |
+
+Saving works even when the document does not exist yet (it is created
+with merge). The Firestore rules allow only the admin Gmail to write
+`config/{doc}` - every other account can only read.
+
+## New field: `support_mobile`
+
+`support_mobile` (string, 10-digit Indian number, empty = off). The app
+prefers the remote value over the compile-time constant; when empty the
+lock screens keep showing the Gmail button.
+
+## Update-check reliability (v0.2.18)
+
+The in-app update check now falls back to the rate-limit-free
+`releases.atom` feed + `expanded_assets` scrape when the GitHub REST
+API is rate-limited (60 req/hour per IP), and every request has a
+12-second timeout. If the system installer cannot open (missing
+"Install unknown apps" permission - it resets after Clear Data), the
+popup shows a one-permission guide plus a "Download in browser" escape.

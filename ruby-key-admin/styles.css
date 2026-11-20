@@ -224,3 +224,63 @@ input, select { font: inherit; }
 }
 #toast.show { opacity: 1; bottom: 34px; }
 #toast.err { border-color: rgba(229,72,77,.6); color: #ffb3b6; }
+
+/* ------------------------------------------ remote control (config/app) */
+.rc-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.rc-head {
+  padding: 14px 16px;
+  cursor: pointer;
+  background: linear-gradient(90deg, var(--ruby-soft), transparent 70%);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+.rc-head:active { background: var(--ruby-soft); }
+.rc-title {
+  font-size: 12.5px; font-weight: 800; letter-spacing: 1.6px;
+  color: var(--text); display: flex; align-items: center; gap: 8px;
+}
+.rc-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 6px rgba(47, 191, 113, .8); display: inline-block;
+  animation: rcpulse 2s infinite;
+}
+@keyframes rcpulse { 50% { opacity: .35; } }
+.rc-sub { margin-top: 6px; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.rc-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+.rc-body.hidden { display: none; }
+.rc-label { font-size: 11px; font-weight: 700; letter-spacing: .5px; color: var(--faint); margin-top: 4px; }
+.rc-body textarea,
+.rc-body input[type="text"],
+.rc-body input[type="tel"] {
+  width: 100%; background: var(--bg2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; font-size: 13px; outline: none; resize: vertical;
+}
+.rc-body textarea:focus,
+.rc-body input:focus { border-color: var(--ruby); }
+.rc-body ::placeholder { color: var(--faint); }
+.rc-toggles { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 6px; }
+.rc-toggle {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--text); cursor: pointer;
+}
+.rc-toggle input { display: none; }
+.rc-toggle .box {
+  width: 34px; height: 20px; border-radius: 20px; background: var(--line);
+  position: relative; transition: background .2s; flex: 0 0 auto;
+}
+.rc-toggle .box::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%; background: var(--muted);
+  transition: transform .2s, background .2s;
+}
+.rc-toggle input:checked + .box { background: var(--green); }
+.rc-toggle input:checked + .box::after { transform: translateX(14px); background: #fff; }
+.rc-save { margin-top: 10px; width: 100%; height: 44px; font-weight: 800; }
+.rc-note { font-size: 11px; color: var(--faint); text-align: center; }

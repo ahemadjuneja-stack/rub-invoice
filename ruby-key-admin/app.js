@@ -1,6 +1,7 @@
 // Ruby Key - the admin panel for Ruby Invoice.
-// Dark, mobile-first PWA. Reads/manages ONLY the `users` and
-// `subscriptions` collections - never the private shops/{uid} data.
+// Dark, mobile-first PWA. Manages the `users` and `subscriptions`
+// collections plus the `config/app` remote-control document - never
+// the private shops/{uid} data.
 //
 // Security:
 //   * Google sign-in only (no sign-up).
@@ -14,7 +15,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, collection, onSnapshot, doc, updateDoc, addDoc,
-  serverTimestamp, Timestamp,
+  getDoc, setDoc, serverTimestamp, Timestamp,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const cfg = window.RUBY_FIREBASE_CONFIG || {};
@@ -30,8 +31,11 @@ let users = [];          // live snapshot of the users collection
 let adminUser = null;    // signed-in Google account
 let adminOk = false;     // passed the whitelist
 let unsubUsers = null;   // Firestore listener
+let unsubConfig = null;  // config/app remote-control listener
 let searchTerm = '';
 let openIds = new Set(); // expanded user cards
+let remoteCfg = {};      // live config/app values
+let cfgDirty = false;    // admin typed something not saved yet
 
 // ---------------------------------------------------------------- utils
 const esc = (s) => String(s ?? '')
@@ -140,6 +144,29 @@ function renderDashboard() {
       <button class="btn-ghost" id="outBtn">Logout</button>
     </header>
     <div class="wrap">
+      <section class="rc-card">
+        <div class="rc-head" id="rcHead">
+          <div class="rc-title">REMOTE CONTROL <span class="rc-dot"></span></div>
+          <div class="rc-sub">Change the app on EVERY phone without an update - applies within seconds (WhatsApp / Blinkit style).</div>
+        </div>
+        <div class="rc-body" id="rcBody">
+          <label class="rc-label">Announcement banner (empty = hidden)</label>
+          <textarea id="rcNotice" rows="2" placeholder="e.g. GST bill format is live!"></textarea>
+          <label class="rc-label">Force-update gate - minimum version (empty = off)</label>
+          <input id="rcMin" type="text" inputmode="decimal" placeholder="e.g. 0.2.18 - older phones MUST update" />
+          <label class="rc-label">Support WhatsApp number (10 digits, empty = email button)</label>
+          <input id="rcSupport" type="tel" inputmode="numeric" maxlength="10" placeholder="e.g. 9876543210" />
+          <div class="rc-toggles">
+            <label class="rc-toggle"><input type="checkbox" id="rcFtLedger" /><span class="box"></span>Ledger</label>
+            <label class="rc-toggle"><input type="checkbox" id="rcFtInventory" /><span class="box"></span>Inventory</label>
+            <label class="rc-toggle"><input type="checkbox" id="rcFtReports" /><span class="box"></span>Reports</label>
+            <label class="rc-toggle"><input type="checkbox" id="rcFtBackup" /><span class="box"></span>Backup</label>
+            <label class="rc-toggle"><input type="checkbox" id="rcAutoApprove" /><span class="box"></span>Auto-approve new shops</label>
+          </div>
+          <button class="btn primary rc-save" id="rcSave">Save &amp; Apply Now</button>
+          <div class="rc-note" id="rcNote">Live - no APK needed.</div>
+        </div>
+      </section>
       <section class="stats" id="stats"></section>
       <div class="search">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#647182" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
@@ -150,12 +177,95 @@ function renderDashboard() {
   document.getElementById('adminChip').textContent = adminUser.email;
   document.getElementById('outBtn').onclick = async () => {
     if (unsubUsers) { unsubUsers(); unsubUsers = null; }
+    if (unsubConfig) { unsubConfig(); unsubConfig = null; }
     await signOut(auth);
   };
   const s = document.getElementById('search');
   s.addEventListener('input', () => { searchTerm = s.value.trim().toLowerCase(); paintUsers(); });
   paintStats();
   paintUsers();
+  bindRemoteControl();
+}
+
+// ---------------------------------------------- remote control (config/app)
+function bindRemoteControl() {
+  const head = document.getElementById('rcHead');
+  const body = document.getElementById('rcBody');
+  if (!head || !body) return;
+  body.classList.add('hidden');
+  head.addEventListener('click', () => body.classList.toggle('hidden'));
+  document.getElementById('rcSave').addEventListener('click', saveRemoteConfig);
+  ['rcNotice', 'rcMin', 'rcSupport', 'rcFtLedger', 'rcFtInventory',
+   'rcFtReports', 'rcFtBackup', 'rcAutoApprove'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => { cfgDirty = true; });
+  });
+}
+
+function fillRemoteForm() {
+  if (cfgDirty) return; // never overwrite unsaved admin edits
+  const g = (id) => document.getElementById(id);
+  if (!g('rcNotice')) return;
+  g('rcNotice').value = remoteCfg.notice || '';
+  g('rcMin').value = remoteCfg.min_version || '';
+  g('rcSupport').value = remoteCfg.support_mobile || '';
+  const f = remoteCfg.features || {};
+  // switches default ON - a feature is only off when stored false
+  g('rcFtLedger').checked = f.ledger !== false;
+  g('rcFtInventory').checked = f.inventory !== false;
+  g('rcFtReports').checked = f.reports !== false;
+  g('rcFtBackup').checked = f.backup !== false;
+  g('rcAutoApprove').checked = remoteCfg.auto_approve !== false;
+  const note = g('rcNote');
+  if (note) {
+    note.textContent = Object.keys(remoteCfg).length
+      ? 'Live - last saved values loaded. Every phone applies changes within seconds.'
+      : 'Not configured yet - saving creates config/app automatically.';
+  }
+}
+
+async function saveRemoteConfig() {
+  const g = (id) => document.getElementById(id);
+  const support = String(g('rcSupport').value || '').replace(/\D/g, '');
+  if (support && support.length !== 10) {
+    toast('Support number must be exactly 10 digits (or empty)', true);
+    return;
+  }
+  const min = String(g('rcMin').value || '').trim();
+  if (min && !/^\d+(\.\d+){0,2}$/.test(min)) {
+    toast('Min version looks wrong - use like 0.2.18', true);
+    return;
+  }
+  if (!confirm('Apply these settings to EVERY installed phone right now?')) return;
+  try {
+    await setDoc(doc(db, 'config', 'app'), {
+      notice: String(g('rcNotice').value || '').trim(),
+      min_version: min,
+      support_mobile: support,
+      features: {
+        ledger: g('rcFtLedger').checked,
+        inventory: g('rcFtInventory').checked,
+        reports: g('rcFtReports').checked,
+        backup: g('rcFtBackup').checked,
+      },
+      auto_approve: g('rcAutoApprove').checked,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    cfgDirty = false;
+    toast('Applied live - every phone picks it up in seconds');
+  } catch (e) {
+    toast('Failed: ' + (e.code || ''), true);
+  }
+}
+
+function listenConfig() {
+  if (unsubConfig) unsubConfig();
+  unsubConfig = onSnapshot(doc(db, 'config', 'app'), (snap) => {
+    remoteCfg = snap.data() || {};
+    fillRemoteForm();
+  }, () => {
+    // read blocked / offline - the form still works, save may fail
+  });
 }
 
 function paintStats() {
@@ -370,6 +480,7 @@ onAuthStateChanged(auth, (user) => {
   if (!user) {
     adminUser = null; adminOk = false;
     if (unsubUsers) { unsubUsers(); unsubUsers = null; }
+    if (unsubConfig) { unsubConfig(); unsubConfig = null; }
     renderLogin();
     return;
   }
@@ -383,6 +494,7 @@ onAuthStateChanged(auth, (user) => {
   adminUser = user; adminOk = true;
   renderDashboard();
   listenUsers();
+  listenConfig();
 });
 
 function listenUsers() {
