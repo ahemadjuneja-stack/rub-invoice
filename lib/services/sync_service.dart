@@ -187,24 +187,47 @@ class SyncService {
 
   // ---------- PULL ----------
 
+  /// v0.2.20 FIX: PER-TABLE sync cursors. The old code shared ONE
+  /// cursor across every table, so the cursor ran ahead to the newest
+  /// row of the first table and every OLDER row of the later tables
+  /// (a payment saved before the last customer edit, a bill older than
+  /// the newest payment...) was silently skipped - FOREVER, because
+  /// the cursor was saved. A fresh device (or a phone whose DB was
+  /// quarantined) restored only a slice of the cloud data: customers
+  /// arrived, bills/payments never did. Engine tests reproduce it.
+  /// Old 'last_sync_ms' key is retired: missing per-table keys start at
+  /// 0 = one full idempotent re-pull (last-write-wins re-apply heals
+  /// every previously missed row) and then the per-table cursors are
+  /// stored.
   Future<void> _pullAll(Database db) async {
-    final last = int.tryParse(await Repo.instance.getMeta('last_sync_ms') ?? '') ?? 0;
-    var cursor = last;
     for (final table in ['customers', 'products', 'payments', 'purchases', 'bill_dispatch']) {
-      cursor = await _pullFlat(db, table, cursor);
+      final last = int.tryParse(await Repo.instance.getMeta('last_sync_ms_$table') ?? '') ?? 0;
+      final cursor = await _pullFlat(db, table, last);
+      if (cursor > last) {
+        await Repo.instance.setMeta('last_sync_ms_$table', '$cursor');
+      }
     }
-    cursor = await _pullBills(db, cursor);
-    await Repo.instance.setMeta('last_sync_ms', '${cursor > 0 ? cursor : DateTime.now().millisecondsSinceEpoch}');
+    final lastBills = int.tryParse(await Repo.instance.getMeta('last_sync_ms_bills') ?? '') ?? 0;
+    final cursorBills = await _pullBills(db, lastBills);
+    if (cursorBills > lastBills) {
+      await Repo.instance.setMeta('last_sync_ms_bills', '$cursorBills');
+    }
   }
 
+  /// Pages with startAfterDocument (not a numeric where) so rows that
+  /// share the exact same updated_at are never skipped at a page
+  /// boundary inside one pull.
   Future<int> _pullFlat(Database db, String table, int after) async {
     var cursor = after;
+    DocumentSnapshot<Map<String, dynamic>>? lastDoc;
     while (true) {
-      final snap = await _coll(table)
-          .where('updated_at', isGreaterThan: cursor)
-          .orderBy('updated_at')
-          .limit(200)
-          .get();
+      Query<Map<String, dynamic>> q = _coll(table).orderBy('updated_at').limit(200);
+      if (lastDoc != null) {
+        q = q.startAfterDocument(lastDoc);
+      } else if (after > 0) {
+        q = q.startAfter([after]);
+      }
+      final snap = await q.get();
       for (final d in snap.docs) {
         final data = Map<String, dynamic>.from(d.data());
         data['id'] ??= d.id;
@@ -213,51 +236,63 @@ class SyncService {
         if (ua > cursor) cursor = ua;
       }
       if (snap.docs.length < 200) return cursor;
+      lastDoc = snap.docs.last;
     }
   }
 
   Future<int> _pullBills(Database db, int after) async {
     var cursor = after;
+    DocumentSnapshot<Map<String, dynamic>>? lastDoc;
     while (true) {
-      final snap = await _coll('bills')
-          .where('updated_at', isGreaterThan: cursor)
-          .orderBy('updated_at')
-          .limit(100)
-          .get();
+      Query<Map<String, dynamic>> q = _coll('bills').orderBy('updated_at').limit(100);
+      if (lastDoc != null) {
+        q = q.startAfterDocument(lastDoc);
+      } else if (after > 0) {
+        q = q.startAfter([after]);
+      }
+      final snap = await q.get();
       for (final d in snap.docs) {
         final data = Map<String, dynamic>.from(d.data());
         data['id'] ??= d.id;
         final itemsRaw = (data.remove('items') as List?) ?? const [];
-        await _applyRemote(db, 'bills', data);
-
-        // Replace local items with the embedded snapshot.
-        final billId = data['id'] as String;
-        await db.delete('bill_items', where: 'bill_id = ?', whereArgs: [billId]);
-        for (final it in itemsRaw) {
-          final m = Map<String, Object?>.from(it as Map);
-          m['dirty'] = 0;
-          m['bill_id'] ??= billId;
-          await db.insert('bill_items', m, conflictAlgorithm: ConflictAlgorithm.replace);
+        // v0.2.20 FIX: only replace local items when the remote bill row
+        // was ACTUALLY applied (strictly newer). The old code deleted and
+        // re-inserted items unconditionally, so a remote snapshot that
+        // LOST the last-write-wins race still destroyed the local item
+        // lines of the winning bill row.
+        final applied = await _applyRemote(db, 'bills', data);
+        if (applied) {
+          final billId = data['id'] as String;
+          await db.delete('bill_items', where: 'bill_id = ?', whereArgs: [billId]);
+          for (final it in itemsRaw) {
+            final m = Map<String, Object?>.from(it as Map);
+            m['dirty'] = 0;
+            m['bill_id'] ??= billId;
+            await db.insert('bill_items', m, conflictAlgorithm: ConflictAlgorithm.replace);
+          }
         }
         final ua = _toInt(data['updated_at']);
         if (ua > cursor) cursor = ua;
       }
       if (snap.docs.length < 100) return cursor;
+      lastDoc = snap.docs.last;
     }
   }
 
   /// Last-write-wins: apply the remote row only when strictly newer.
-  Future<void> _applyRemote(Database db, String table, Map<String, dynamic> data) async {
+  /// Returns true when the row was applied (or is brand new locally).
+  Future<bool> _applyRemote(Database db, String table, Map<String, dynamic> data) async {
     final id = data['id'] as String;
     final remoteUa = _toInt(data['updated_at']);
     final local = await db.rawQuery('SELECT updated_at FROM $table WHERE id = ?', [id]);
     if (local.isNotEmpty) {
       final localUa = _toInt(local.first['updated_at']);
-      if (remoteUa <= localUa) return;
+      if (remoteUa <= localUa) return false;
     }
     final row = Map<String, Object?>.from(data);
     row['dirty'] = 0;
     await db.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+    return true;
   }
 
   int _toInt(Object? v) => ((v ?? 0) as num).toInt();

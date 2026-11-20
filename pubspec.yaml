@@ -1,7 +1,7 @@
 name: ruby_invoice
 description: "Ruby Invoice - fast offline-first billing, ledger & inventory app with Firebase sync."
 publish_to: "none"
-version: 0.2.19+21
+version: 0.2.20+22
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -62,6 +62,8 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.2
+  # DB engine regression tests run on the Dart VM (no emulator needed)
+  sqflite_common_ffi: ^2.3.3
 
 flutter:
   uses-material-design: true

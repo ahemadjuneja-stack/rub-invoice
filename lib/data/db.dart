@@ -196,13 +196,22 @@ class DB {
 
     await _createDispatch(db);
 
-    await db.execute('CREATE INDEX idx_bills_day ON bills (bill_day)');
-    await db.execute('CREATE INDEX idx_bills_customer ON bills (customer_id)');
-    await db.execute('CREATE INDEX idx_items_bill ON bill_items (bill_id)');
-    await db.execute('CREATE INDEX idx_payments_customer ON payments (customer_id)');
-    await db.execute('CREATE INDEX idx_customers_name ON customers (name)');
-    await db.execute('CREATE INDEX idx_products_name ON products (name)');
-    await db.execute('CREATE INDEX idx_purchases_day ON purchases (purchase_day)');
+    // v0.2.20 FIX: every index here uses IF NOT EXISTS. _createPurchases
+    // already creates idx_purchases_day, so the bare duplicate
+    // "CREATE INDEX idx_purchases_day" below used to THROW
+    // ("index idx_purchases_day already exists") during onCreate ->
+    // openDatabase failed on EVERY fresh database -> 4 retries failed
+    // the same way -> quarantine created a new file -> same crash again
+    // -> DB.open() threw -> every customer/bill save and every list
+    // load failed forever ("Cannot add customers", "Data could not
+    // load + RETRY"). The engine tests reproduce it 100%.
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_bills_day ON bills (bill_day)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_bills_customer ON bills (customer_id)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_items_bill ON bill_items (bill_id)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_payments_customer ON payments (customer_id)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_products_name ON products (name)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_purchases_day ON purchases (purchase_day)');
   }
 
   /// Purchase invoices table: supplier bills with an optional photo of

@@ -48,6 +48,12 @@ jobs:
           set -o pipefail
           flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee /tmp/analyze.log
 
+      # v0.2.20: engine regression tests (fresh-db open, corrupt-file
+      # quarantine, dirty flags) on the Dart VM via sqflite_common_ffi.
+      # A red test stops the APK from building at all.
+      - name: Run engine tests
+        run: flutter test
+
       # Analyze failures leave no build log behind - publish the analyzer
       # output to the ci-logs branch so it is readable via
       # raw.githubusercontent.com without any API rate limits.
