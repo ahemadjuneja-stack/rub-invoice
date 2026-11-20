@@ -39,7 +39,7 @@ class AccessLockedScreen extends StatelessWidget {
   String get _message {
     switch (reason) {
       case AccessState.expired:
-        return 'Your free trial / subscription is over. '
+        return 'Your subscription validity is over. '
             'Contact the Admin to renew - the app unlocks the moment '
             'validity is extended.\n\n'
             'Your bills, ledger and inventory are safe and will be '

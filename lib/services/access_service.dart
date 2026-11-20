@@ -20,8 +20,10 @@ import 'remote_config.dart';
 ///   pinHash/pinSalt   -> salted SHA-256 of the 4-digit Quick PIN
 ///                        (NEVER the plain PIN)
 ///   status            -> "pending" | "active" | "blocked"
-///   plan              -> "trial" (7 days) | "paid" | '' (legacy)
-///   trialStartDate/trialEndDate -> the 7-day free trial window
+///   plan              -> "free" | "paid" | "trial" (legacy) | '' (legacy)
+///   trialStartDate/trialEndDate -> legacy trial window (READ-ONLY since
+///                        v0.3.0 - the 7-day trial system was removed;
+///                        these fields no longer affect access at all)
 ///   subscriptionEndDate -> set by the Admin / Ruby Key (or Razorpay later)
 ///   expiryDate        -> legacy field; still honoured for old accounts
 ///   maxDevices        -> default 2
@@ -89,9 +91,13 @@ class AccessService {
   /// the account is born "active" so the owner walks straight in (no
   /// waiting screen); the Admin can still kill-switch it later. With the
   /// flag OFF it is born "pending" and waits for manual admin approval.
-  /// Login is Google-based (Gmail), no SMS. New accounts get the 7-day
-  /// FREE TRIAL (plan = "trial"); the Admin / Ruby Key extends validity
-  /// by setting subscriptionEndDate (Razorpay writes the same field).
+  /// Login is Google-based (Gmail), no SMS.
+  ///
+  /// v0.3.0: NO 7-day trial anymore - a new account is born usable and
+  /// stays usable until the Admin (Ruby Key) blocks it or sets an end
+  /// date (subscriptionEndDate / expiryDate). The old trial fields are
+  /// kept only for reading legacy accounts; they no longer decide
+  /// anything.
   /// If a doc already exists (2nd device / reinstall) the MASTER COPY in
   /// Firestore wins and the local PIN is imported from it, so the same
   /// account works on both devices with the same Quick PIN.
@@ -120,8 +126,8 @@ class AccessService {
     }
 
     final auto = RemoteConfigService.instance.config.value.autoApprove;
-    final now = DateTime.now();
-    // 7-day free trial, 2 devices max - exactly the access spec.
+    // v0.3.0: no 7-day trial - the account is usable immediately. Only
+    // the Admin (Ruby Key) can block it or set an end date later.
     final info = AccountInfo(
       uid: uid,
       businessName: businessName.trim(),
@@ -132,9 +138,9 @@ class AccessService {
       address: address.trim(),
       gst: gst.trim(),
       status: auto ? 'active' : 'pending',
-      plan: 'trial',
-      trialStartDate: now.millisecondsSinceEpoch,
-      trialEndDate: now.add(const Duration(days: 7)),
+      plan: 'free',
+      trialStartDate: 0,
+      trialEndDate: null,
       expiryDate: null,
       maxDevices: 2,
       registeredDevices: [devId],
@@ -464,13 +470,13 @@ class AccountInfo {
     this.pinSalt = '',
   }) : deviceModels = deviceModels ?? <String, String>{};
 
-  /// The access spec: status == "active" AND the newest of
-  /// subscriptionEndDate / trialEndDate / legacy expiryDate has not
+  /// The access spec (v0.3.0): status == "active" AND the admin-set
+  /// validity (subscriptionEndDate, or the legacy expiryDate) has not
   /// passed AND this device is one of the (max 2) approved devices.
+  /// trialEndDate is deliberately IGNORED - the 7-day trial system was
+  /// removed; old accounts with a long-past trialEndDate stay usable.
   DateTime? get effectiveExpiry {
-    return subscriptionEndDate ??
-        (plan == 'trial' ? trialEndDate : null) ??
-        expiryDate;
+    return subscriptionEndDate ?? expiryDate;
   }
 
   factory AccountInfo.fromMap(String uid, Map<String, dynamic> m) {

@@ -338,7 +338,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         const SizedBox(height: 10),
         Text(
           fbReady
-              ? 'New accounts start with a FREE 7-day trial. 2 devices max.'
+              ? 'Registration completes instantly - no trial period. '
+                  'The Admin can manage your account any time. 2 devices max.'
               : 'Offline mode: registration stays on this phone only.',
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 11.5, height: 1.45, color: Ruby.faint),

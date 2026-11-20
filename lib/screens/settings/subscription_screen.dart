@@ -90,7 +90,7 @@ class SubscriptionScreen extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Simple plans for every shop. Your 7-day trial is fully free.',
+            'Simple plans for every shop. Manage your validity here.',
             style: TextStyle(
               fontSize: 13,
               height: 1.45,
@@ -102,7 +102,7 @@ class SubscriptionScreen extends StatelessWidget {
     );
   }
 
-  // ---------------- free trial ----------------
+  // ---------------- account status ----------------
 
   Widget _freeYearCard() {
     return _whiteCard(
@@ -124,7 +124,7 @@ class SubscriptionScreen extends StatelessWidget {
               const SizedBox(width: 12),
               const Expanded(
                 child: Text(
-                  'You get 7 Days FREE',
+                  'Your account is active',
                   style: TextStyle(
                       fontSize: 15.5,
                       fontWeight: FontWeight.w800,
@@ -135,10 +135,11 @@ class SubscriptionScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Every new account starts with a complete 7-day free trial. '
-            'All features - billing, inventory, customer ledger, reports, '
-            'purchase invoices, bilty photo sync and 2-device cloud sync - '
-            'are unlocked during the trial. No payment is needed today.',
+            'All features are unlocked: billing, inventory, customer '
+            'ledger, reports, purchase invoices, bilty photo sync and '
+            '2-device cloud sync. There is no trial period - the Admin '
+            'can extend or renew validity from the Ruby Key panel at '
+            'any time. No payment is needed today.',
             style: TextStyle(
                 fontSize: 13, height: 1.55, color: Ruby.muted),
           ),
@@ -155,7 +156,7 @@ class SubscriptionScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'After your free trial ends',
+            'Renewal plans',
             style: TextStyle(
                 fontSize: 15.5,
                 fontWeight: FontWeight.w800,

@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // =====================================================================
-// Ruby Invoice - Firestore security rules v3 (security-audit hardening)
+// Ruby Invoice - Firestore security rules v4 (security-audit hardening)
 //
 // Threat model: a malicious client (rooted phone, curl + stolen Gmail
 // session, modified APK) talking straight to Firestore. Every claim the
@@ -14,24 +14,16 @@ rules_version = '2';
 //   subscriptions/{subId}           -> Razorpay-ready subscription ledger
 //   config/{docId}                  -> remote feature flags (public read)
 //
-// v3 changes (vs v2):
-//   1. BLOCKED or EXPIRED accounts lose ALL cloud access server-side
-//      (the old rules only checked status == "active").
-//   2. Protected fields (status, plan, maxDevices, trialEndDate,
-//      subscriptionEndDate, expiryDate, trialStartDate, role, email,
-//      registeredDevices in the profile path) can only ever be changed
-//      by the whitelisted Admin Gmail - the owner whitelists were
-//      already strict, they are now also expiry/blocked-gated.
-//   3. 2-DEVICE LIMIT enforced server-side: the owner's device list is
-//      append-or-remove only and can never exceed maxDevices. A third
-//      device's registration write is rejected by the rules, so it
-//      cannot become an approved device.
-//   4. Registration hardening: the doc's email must match the signed-in
-//      Google identity, status must be trial-pending-or-active, a role
-//      field can never be injected at create time.
-//   5. subscriptions stay admin-writable ONLY - a client can never
-//      self-activate a paid plan (the Razorpay webhook is the only
-//      other writer; see server/razorpay-webhook/).
+// v4 changes (vs v3):
+//   1. NO TRIAL ANYMORE: trialEndDate no longer decides anything. An
+//      account is usable from birth and stays usable until the Admin
+//      blocks it or sets subscriptionEndDate / legacy expiryDate.
+//      (Legacy 'trial' plan rows are still accepted at create for old
+//      app versions in the field.)
+//   2. Ruby Key support view: the Admin can READ a user's shop data
+//      (bills, ledger, inventory, purchases) for support and account
+//      management. The Admin still cannot WRITE any shop row - data
+//      remains owner-writable only.
 // =====================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -64,16 +56,15 @@ service cloud.firestore {
       return account.get('status', '') == 'blocked';
     }
 
-    // Mirrors AccountInfo.effectiveExpiry in the app exactly:
-    //   subscriptionEndDate ?? (plan == "trial" ? trialEndDate : null)
-    //                        ?? legacy expiryDate
+    // Mirrors AccountInfo.effectiveExpiry in the app exactly (v0.3.0):
+    //   subscriptionEndDate ?? legacy expiryDate
+    // trialEndDate is deliberately IGNORED - the 7-day trial system was
+    // removed; an old account whose trialEndDate is long past stays
+    // usable until the Admin sets a real end date or blocks it.
     function isExpired(account) {
       let sub = account.get('subscriptionEndDate', null);
-      let trial = account.get('plan', '') == 'trial'
-          ? account.get('trialEndDate', null) : null;
       let legacy = account.get('expiryDate', null);
-      let end = sub != null ? sub
-              : (trial != null ? trial : legacy);
+      let end = sub != null ? sub : legacy;
       return end != null
           && request.time.toMillis() > asMillis(end);
     }
@@ -127,11 +118,10 @@ service cloud.firestore {
           && request.resource.data.email.lower()
                  == request.auth.token.email.lower()
           && request.resource.data.maxDevices == 2
-          && request.resource.data.plan == 'trial'
+          && request.resource.data.plan in ['free', 'trial']
           && request.resource.data.status in ['pending', 'active']
           && (request.resource.data.status == 'pending'
               || isAutoApproveOn())
-          && request.resource.data.trialEndDate != null
           && request.resource.data.registeredDevices.size()
                  <= request.resource.data.maxDevices
           && !request.resource.data.keys().hasAny(['role']);
@@ -177,12 +167,15 @@ service cloud.firestore {
 
     // ----------------------------------------------------------------
     // shops/{uid}/... - private billing data + photo markers
-    // Strict single-owner isolation (BOLA): even the admin has no rule
-    // path here - support needs an explicit owner-present session.
+    // Strict single-owner isolation: WRITE stays owner-only. READ is
+    // owner-only plus the Admin (Ruby Key support view - "user ka sara
+    // data Ruby Key par"). The Admin can never create, change or delete
+    // a shop row through these rules.
     // Blocked / expired accounts: read AND write denied server-side.
     // ----------------------------------------------------------------
     match /shops/{shopId}/{document=**} {
-      allow read, write: if canUseCloud(shopId);
+      allow read: if canUseCloud(shopId) || isAdmin();
+      allow write: if canUseCloud(shopId);
     }
 
     // ----------------------------------------------------------------
