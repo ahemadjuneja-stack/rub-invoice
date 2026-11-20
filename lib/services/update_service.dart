@@ -83,7 +83,7 @@ class UpdateService {
       }
     }
     if (latest.isEmpty) {
-      throw Exception('Update check failed (no network / GitHub down)');
+      throw Exception('Update check failed (no network / server unreachable)');
     }
     _latestTag = latest;
     _apkUrl = apk;

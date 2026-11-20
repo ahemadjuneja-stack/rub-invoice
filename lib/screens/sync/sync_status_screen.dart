@@ -103,7 +103,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
             const SizedBox(height: 8),
             _rowCard(
               icon: Icons.cloud_outlined,
-              label: 'Firebase',
+              label: 'Cloud service',
               value: _fbReady
                   ? 'Configured - signed in'
                   : 'Not configured (offline-only mode)',
@@ -187,7 +187,7 @@ class _SyncStatusScreenState extends State<SyncStatusScreen> {
         title = _fbReady ? 'Syncing...' : 'Offline Mode';
         subtitle = _fbReady
             ? 'Uploading and downloading the latest changes...'
-            : 'Working locally - data will sync once Firebase is set up.';
+            : 'Working locally - data will sync once you sign in to your cloud account.';
         bg = Ruby.fieldBg;
         fg = Ruby.ink;
         icon = Icons.cloud_sync_outlined;

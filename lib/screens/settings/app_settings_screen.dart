@@ -125,7 +125,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 leading: const Icon(Icons.cloud_sync_outlined, color: Ruby.ruby, size: 20),
                 title: const Text('Cloud Sync Status',
                     style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Ruby.ink)),
-                subtitle: const Text('Firebase sync across your devices',
+                subtitle: const Text('Automatic cloud sync across your devices',
                     style: TextStyle(fontSize: 12, color: Ruby.muted)),
                 trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
                 onTap: () {
@@ -372,7 +372,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         title: const Text('Ruby Invoice', style: TextStyle(fontWeight: FontWeight.w800)),
         content: Text(
           'Version $v\n\nOffline-first billing with exact paise-level ledger math, '
-          'inventory auto-fill and Firebase sync across your devices.',
+          'inventory auto-fill and automatic cloud sync across your devices.',
           style: const TextStyle(fontSize: 13.5, height: 1.5, color: Ruby.muted),
         ),
         actions: [

@@ -183,7 +183,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final label = switch (status) {
           SyncStatus.offline => 'Signed out',
           SyncStatus.syncing => 'Syncing...',
-          SyncStatus.synced => 'All data synced to Firebase',
+          SyncStatus.synced => 'All data synced to the cloud',
           SyncStatus.error => 'Sync failed - will retry',
         };
         return Card(

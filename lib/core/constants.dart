@@ -5,6 +5,11 @@ import '../services/remote_config.dart';
 /// Ruby Key (the web admin panel in /ruby-key-admin) and the lock
 /// screens read these values, so everything stays in one place.
 ///
+/// GOVERNANCE: before changing ANY user-visible string in this app,
+/// read /GOVERNANCE.md at the repo root (BINDING for every developer
+/// and every automated tool, forever). User-facing text must never
+/// name the underlying platforms or infrastructure.
+///
 /// REMOTE CONTROL: supportMobile below is the OFFLINE FALLBACK. The
 /// live value comes from the Firestore document `config/app`
 /// (`support_mobile` field) - editable from the Ruby Key panel's

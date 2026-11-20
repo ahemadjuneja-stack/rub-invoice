@@ -113,7 +113,7 @@ class _BackupScreenState extends State<BackupScreen> {
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.cloud_sync_outlined, color: Ruby.ruby),
-              title: const Text('Firebase sync', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+              title: const Text('Cloud sync', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
               subtitle: const Text(
                 'Enabled: data syncs automatically to your other device(s) with the same number. '
                 'Export is still recommended as an extra safety copy.',

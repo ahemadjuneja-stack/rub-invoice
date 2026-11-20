@@ -92,9 +92,9 @@ class _LoginScreenState extends State<LoginScreen> {
         return 'Google sign-in was cancelled. Tap the button and pick '
             'your Gmail account.';
       case '10':
-        return 'Setup incomplete: add the app SHA-1 / SHA-256 fingerprints '
-            'in Firebase console (Project settings -> Your apps) and '
-            're-download google-services.json (docs/FIREBASE_SETUP.md).';
+        return 'Setup incomplete: this copy of the app is not linked to '
+            'its cloud account yet. Please contact support - sign-in will '
+            'start working once the setup is completed on our side.';
       case '7':
         return 'No internet connection. Check mobile data or WiFi.';
       case '8':
