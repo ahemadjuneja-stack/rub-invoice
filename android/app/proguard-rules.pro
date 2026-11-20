@@ -61,6 +61,12 @@
 -keep class androidx.work.** { *; }                     # background workers
 -dontwarn androidx.**
 
+# Flutter's deferred-components manager (PlayStoreDeferredComponentManager)
+# references the Play Core split-install library. This app does NOT use
+# deferred components - the classes are never loaded at runtime - so the
+# references are safe to ignore for R8.
+-dontwarn com.google.android.play.core.**
+
 # ---- generic safety nets ---------------------------------------------
 # Obfuscated stack traces: keep the mapping file (CI uploads it for
 # crash symbolication) and neutralize the original file names.
