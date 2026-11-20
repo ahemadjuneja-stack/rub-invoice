@@ -37,7 +37,7 @@ class DB {
   static Future<Database> _openNow() async {
     final dir = await getDatabasesPath();
     final path = p.join(dir, 'ruby_invoice.db');
-    Exception? last;
+    Object? last;
     for (int attempt = 1; attempt <= 4; attempt++) {
       try {
         final db = await openDatabase(
