@@ -393,10 +393,15 @@ class CartLine {
 class Purchase {
   final String id;
   final int purchaseNo; // serial, like bills
+  final String supplierId; // link to the suppliers table (v0.3.0)
   final String supplierName;
   final String supplierPhone;
-  final int amountPaise;
-  final String note; // details: items bought, bill no, etc.
+  final String partyBillNo; // the supplier's own paper bill number
+  final int subtotalPaise; // sum of item amounts (taxable value)
+  final int gstTotalPaise; // sum of gst per item
+  final int parcelPaise; // parcel / freight / transport charges
+  final int amountPaise; // grand total = subtotal + gst + parcel
+  final String note; // free note
   final String photoPath; // local absolute path, '' when there is none
   final int purchaseDate; // epoch ms (the chosen bill date)
   final String purchaseDay; // "2026-11-19" local day key
@@ -408,8 +413,13 @@ class Purchase {
   Purchase({
     required this.id,
     required this.purchaseNo,
+    this.supplierId = '',
     required this.supplierName,
     this.supplierPhone = '',
+    this.partyBillNo = '',
+    this.subtotalPaise = 0,
+    this.gstTotalPaise = 0,
+    this.parcelPaise = 0,
     required this.amountPaise,
     this.note = '',
     this.photoPath = '',
@@ -424,8 +434,13 @@ class Purchase {
   factory Purchase.fromMap(Map<String, Object?> m) => Purchase(
         id: m['id'] as String,
         purchaseNo: (m['purchase_no'] ?? 0) as int,
+        supplierId: (m['supplier_id'] ?? '') as String,
         supplierName: (m['supplier_name'] ?? '') as String,
         supplierPhone: (m['supplier_phone'] ?? '') as String,
+        partyBillNo: (m['party_bill_no'] ?? '') as String,
+        subtotalPaise: (m['subtotal_paise'] ?? 0) as int,
+        gstTotalPaise: (m['gst_total_paise'] ?? 0) as int,
+        parcelPaise: (m['parcel_paise'] ?? 0) as int,
         amountPaise: (m['amount_paise'] ?? 0) as int,
         note: (m['note'] ?? '') as String,
         photoPath: (m['photo_path'] ?? '') as String,
@@ -440,8 +455,13 @@ class Purchase {
   Map<String, Object?> toMap() => {
         'id': id,
         'purchase_no': purchaseNo,
+        'supplier_id': supplierId,
         'supplier_name': supplierName,
         'supplier_phone': supplierPhone,
+        'party_bill_no': partyBillNo,
+        'subtotal_paise': subtotalPaise,
+        'gst_total_paise': gstTotalPaise,
+        'parcel_paise': parcelPaise,
         'amount_paise': amountPaise,
         'note': note,
         'photo_path': photoPath,
@@ -526,4 +546,473 @@ class BillDispatch {
     if (mode == 'pending') return 'Transport Pending';
     return 'Not set';
   }
+}
+
+// =====================================================================
+// v0.3.0 PURCHASE MODULE - full billing-style purchase system
+// =====================================================================
+
+/// A purchase party (supplier) - "Surat Shardha Cosmetic" etc. Mirror of
+/// Customer: same sync-ready row shape, its own ledger.
+class Supplier {
+  final String id;
+  final String name;
+  final String shopName;
+  final String city;
+  final String phone;
+  final String address;
+  final int openingBalancePaise; // +ve = we already owed this supplier
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  Supplier({
+    required this.id,
+    required this.name,
+    this.shopName = '',
+    this.city = '',
+    this.phone = '',
+    this.address = '',
+    this.openingBalancePaise = 0,
+    required this.createdAt,
+    required this.updatedAt,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  factory Supplier.fromMap(Map<String, Object?> m) => Supplier(
+        id: m['id'] as String,
+        name: m['name'] as String,
+        shopName: (m['shop_name'] ?? '') as String,
+        city: (m['city'] ?? '') as String,
+        phone: (m['phone'] ?? '') as String,
+        address: (m['address'] ?? '') as String,
+        openingBalancePaise: (m['opening_balance_paise'] ?? 0) as int,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'name': name,
+        'shop_name': shopName,
+        'city': city,
+        'phone': phone,
+        'address': address,
+        'opening_balance_paise': openingBalancePaise,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
+
+  static Supplier fromSync(Map<String, Object?> m) =>
+      Supplier.fromMap({...m, 'dirty': 0});
+}
+
+/// One line of a purchase bill: what came in, how much of it, at which
+/// rate, and how much GST applies to THIS product.
+class PurchaseItem {
+  final String id;
+  final String purchaseId;
+  final String? productId;
+  final String productName;
+  final double qty;
+  final int ratePaise;
+  final double gstPercent; // per-product GST, e.g. 18
+  final int amountPaise; // qty * rate (gst NOT compounded into amount)
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  PurchaseItem({
+    required this.id,
+    required this.purchaseId,
+    this.productId,
+    required this.productName,
+    required this.qty,
+    required this.ratePaise,
+    this.gstPercent = 0,
+    required this.amountPaise,
+    required this.createdAt,
+    this.updatedAt = 0,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  factory PurchaseItem.fromMap(Map<String, Object?> m) => PurchaseItem(
+        id: m['id'] as String,
+        purchaseId: m['purchase_id'] as String,
+        productId: m['product_id'] as String?,
+        productName: m['product_name'] as String,
+        qty: ((m['qty'] ?? 0) as num).toDouble(),
+        ratePaise: (m['rate_paise'] ?? 0) as int,
+        gstPercent: ((m['gst_percent'] ?? 0) as num).toDouble(),
+        amountPaise: (m['amount_paise'] ?? 0) as int,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'purchase_id': purchaseId,
+        'product_id': productId,
+        'product_name': productName,
+        'qty': qty,
+        'rate_paise': ratePaise,
+        'gst_percent': gstPercent,
+        'amount_paise': amountPaise,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
+
+  /// GST paise for this line: amount * gst% / 100, half-up to paise.
+  int get gstPaise => ((amountPaise * gstPercent) / 100).round();
+}
+
+/// A line being built in the purchase form (mirrors CartLine).
+class PurchaseCartLine {
+  final String? productId;
+  final String name;
+  double qty;
+  int ratePaise;
+  double gstPercent;
+
+  PurchaseCartLine({
+    this.productId,
+    required this.name,
+    required this.qty,
+    required this.ratePaise,
+    this.gstPercent = 0,
+  });
+
+  int get amountPaise => Money.lineAmountPaise(qty, ratePaise);
+  int get gstPaise => ((amountPaise * gstPercent) / 100).round();
+}
+
+/// Purchase RETURN: goods sent back to a supplier. Reduces what we owe
+/// the supplier (credit in the supplier ledger).
+class PurchaseReturn {
+  final String id;
+  final int returnNo;
+  final String supplierId;
+  final String supplierName; // snapshot
+  final int amountPaise; // grand total of returned goods (ex GST)
+  final int gstTotalPaise;
+  final String note;
+  final int returnDate;
+  final String returnDay;
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  PurchaseReturn({
+    required this.id,
+    required this.returnNo,
+    this.supplierId = '',
+    required this.supplierName,
+    required this.amountPaise,
+    this.gstTotalPaise = 0,
+    this.note = '',
+    required this.returnDate,
+    required this.returnDay,
+    required this.createdAt,
+    required this.updatedAt,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  factory PurchaseReturn.fromMap(Map<String, Object?> m) => PurchaseReturn(
+        id: m['id'] as String,
+        returnNo: (m['return_no'] ?? 0) as int,
+        supplierId: (m['supplier_id'] ?? '') as String,
+        supplierName: (m['supplier_name'] ?? '') as String,
+        amountPaise: (m['amount_paise'] ?? 0) as int,
+        gstTotalPaise: (m['gst_total_paise'] ?? 0) as int,
+        note: (m['note'] ?? '') as String,
+        returnDate: (m['return_date'] ?? 0) as int,
+        returnDay: (m['return_day'] ?? '') as String,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'return_no': returnNo,
+        'supplier_id': supplierId,
+        'supplier_name': supplierName,
+        'amount_paise': amountPaise,
+        'gst_total_paise': gstTotalPaise,
+        'note': note,
+        'return_date': returnDate,
+        'return_day': returnDay,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
+
+  static PurchaseReturn fromSync(Map<String, Object?> m) =>
+      PurchaseReturn.fromMap({...m, 'dirty': 0});
+}
+
+class PurchaseReturnItem {
+  final String id;
+  final String returnId;
+  final String productName;
+  final double qty;
+  final int ratePaise;
+  final double gstPercent;
+  final int amountPaise;
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  PurchaseReturnItem({
+    required this.id,
+    required this.returnId,
+    required this.productName,
+    required this.qty,
+    required this.ratePaise,
+    this.gstPercent = 0,
+    required this.amountPaise,
+    required this.createdAt,
+    this.updatedAt = 0,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  factory PurchaseReturnItem.fromMap(Map<String, Object?> m) =>
+      PurchaseReturnItem(
+        id: m['id'] as String,
+        returnId: m['return_id'] as String,
+        productName: m['product_name'] as String,
+        qty: ((m['qty'] ?? 0) as num).toDouble(),
+        ratePaise: (m['rate_paise'] ?? 0) as int,
+        gstPercent: ((m['gst_percent'] ?? 0) as num).toDouble(),
+        amountPaise: (m['amount_paise'] ?? 0) as int,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'return_id': returnId,
+        'product_name': productName,
+        'qty': qty,
+        'rate_paise': ratePaise,
+        'gst_percent': gstPercent,
+        'amount_paise': amountPaise,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
+
+  int get gstPaise => ((amountPaise * gstPercent) / 100).round();
+}
+
+/// Money WE pay a supplier (settlement of the supplier account).
+class SupplierPayment {
+  final String id;
+  final String supplierId;
+  final int amountPaise;
+  final int payDate;
+  final String payDay;
+  final String mode; // cash | upi | bank | other
+  final String note;
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  SupplierPayment({
+    required this.id,
+    required this.supplierId,
+    required this.amountPaise,
+    required this.payDate,
+    required this.payDay,
+    this.mode = 'cash',
+    this.note = '',
+    required this.createdAt,
+    required this.updatedAt,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  factory SupplierPayment.fromMap(Map<String, Object?> m) => SupplierPayment(
+        id: m['id'] as String,
+        supplierId: m['supplier_id'] as String,
+        amountPaise: (m['amount_paise'] ?? 0) as int,
+        payDate: (m['pay_date'] ?? 0) as int,
+        payDay: (m['pay_day'] ?? '') as String,
+        mode: (m['mode'] ?? 'cash') as String,
+        note: (m['note'] ?? '') as String,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'supplier_id': supplierId,
+        'amount_paise': amountPaise,
+        'pay_date': payDate,
+        'pay_day': payDay,
+        'mode': mode,
+        'note': note,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
+
+  static SupplierPayment fromSync(Map<String, Object?> m) =>
+      SupplierPayment.fromMap({...m, 'dirty': 0});
+}
+
+/// SALES RETURN: goods a customer sent back. Credited in that customer's
+/// ledger (jama) with the full item detail.
+class SalesReturn {
+  final String id;
+  final int returnNo;
+  final String customerId;
+  final String customerName; // snapshot
+  final int amountPaise;
+  final String note;
+  final int returnDate;
+  final String returnDay;
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  SalesReturn({
+    required this.id,
+    required this.returnNo,
+    required this.customerId,
+    required this.customerName,
+    required this.amountPaise,
+    this.note = '',
+    required this.returnDate,
+    required this.returnDay,
+    required this.createdAt,
+    required this.updatedAt,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  factory SalesReturn.fromMap(Map<String, Object?> m) => SalesReturn(
+        id: m['id'] as String,
+        returnNo: (m['return_no'] ?? 0) as int,
+        customerId: m['customer_id'] as String,
+        customerName: (m['customer_name'] ?? '') as String,
+        amountPaise: (m['amount_paise'] ?? 0) as int,
+        note: (m['note'] ?? '') as String,
+        returnDate: (m['return_date'] ?? 0) as int,
+        returnDay: (m['return_day'] ?? '') as String,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'return_no': returnNo,
+        'customer_id': customerId,
+        'customer_name': customerName,
+        'amount_paise': amountPaise,
+        'note': note,
+        'return_date': returnDate,
+        'return_day': returnDay,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
+
+  static SalesReturn fromSync(Map<String, Object?> m) =>
+      SalesReturn.fromMap({...m, 'dirty': 0});
+}
+
+class SalesReturnItem {
+  final String id;
+  final String returnId;
+  final String productName;
+  final double qty;
+  final int ratePaise;
+  final int amountPaise;
+  final int createdAt;
+  final int updatedAt;
+  final int isDeleted;
+  final int dirty;
+
+  SalesReturnItem({
+    required this.id,
+    required this.returnId,
+    required this.productName,
+    required this.qty,
+    required this.ratePaise,
+    required this.amountPaise,
+    required this.createdAt,
+    this.updatedAt = 0,
+    this.isDeleted = 0,
+    this.dirty = 1,
+  });
+
+  factory SalesReturnItem.fromMap(Map<String, Object?> m) => SalesReturnItem(
+        id: m['id'] as String,
+        returnId: m['return_id'] as String,
+        productName: m['product_name'] as String,
+        qty: ((m['qty'] ?? 0) as num).toDouble(),
+        ratePaise: (m['rate_paise'] ?? 0) as int,
+        amountPaise: (m['amount_paise'] ?? 0) as int,
+        createdAt: (m['created_at'] ?? 0) as int,
+        updatedAt: (m['updated_at'] ?? 0) as int,
+        isDeleted: (m['is_deleted'] ?? 0) as int,
+        dirty: (m['dirty'] ?? 0) as int,
+      );
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'return_id': returnId,
+        'product_name': productName,
+        'qty': qty,
+        'rate_paise': ratePaise,
+        'amount_paise': amountPaise,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+        'is_deleted': isDeleted,
+        'dirty': dirty,
+      };
+
+  Map<String, Object?> toSync() => toMap()..remove('dirty');
 }

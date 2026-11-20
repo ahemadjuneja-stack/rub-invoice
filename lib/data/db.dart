@@ -58,7 +58,7 @@ class DB {
       try {
         final db = await openDatabase(
           path,
-          version: 5,
+          version: 6,
           onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
           onUpgrade: _onUpgrade,
           onCreate: _onCreate,
@@ -87,7 +87,7 @@ class DB {
     }
     final db = await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onUpgrade: _onUpgrade,
       onCreate: _onCreate,
@@ -122,6 +122,148 @@ class DB {
     if (oldVersion < 5) {
       await _createDispatch(db);
     }
+    // v6 (v0.3.0): full purchase module - supplier parties, purchase
+    // bill items with per-product GST, purchase returns, supplier
+    // payments and customer sales returns. The purchases header gains
+    // the supplier link + party bill number + gst/parcel totals.
+    if (oldVersion < 6) {
+      await _createPurchaseModule(db);
+    }
+  }
+
+  /// v0.3.0 purchase module tables. Every statement is safe to run on a
+  /// fresh database too (_onCreate calls this) - CREATE TABLE IF NOT
+  /// EXISTS + guarded ALTERs for the columns added to the purchases
+  /// header.
+  static Future<void> _createPurchaseModule(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        shop_name TEXT DEFAULT '',
+        city TEXT DEFAULT '',
+        phone TEXT DEFAULT '',
+        address TEXT DEFAULT '',
+        opening_balance_paise INTEGER DEFAULT 0,
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS purchase_items (
+        id TEXT PRIMARY KEY,
+        purchase_id TEXT NOT NULL,
+        product_id TEXT,
+        product_name TEXT NOT NULL,
+        qty REAL DEFAULT 0,
+        rate_paise INTEGER DEFAULT 0,
+        gst_percent REAL DEFAULT 0,
+        amount_paise INTEGER DEFAULT 0,
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS purchase_returns (
+        id TEXT PRIMARY KEY,
+        return_no INTEGER DEFAULT 0,
+        supplier_id TEXT DEFAULT '',
+        supplier_name TEXT NOT NULL DEFAULT '',
+        amount_paise INTEGER DEFAULT 0,
+        gst_total_paise INTEGER DEFAULT 0,
+        note TEXT DEFAULT '',
+        return_date INTEGER DEFAULT 0,
+        return_day TEXT DEFAULT '',
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS purchase_return_items (
+        id TEXT PRIMARY KEY,
+        return_id TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        qty REAL DEFAULT 0,
+        rate_paise INTEGER DEFAULT 0,
+        gst_percent REAL DEFAULT 0,
+        amount_paise INTEGER DEFAULT 0,
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS supplier_payments (
+        id TEXT PRIMARY KEY,
+        supplier_id TEXT NOT NULL,
+        amount_paise INTEGER DEFAULT 0,
+        pay_date INTEGER DEFAULT 0,
+        pay_day TEXT DEFAULT '',
+        mode TEXT DEFAULT 'cash',
+        note TEXT DEFAULT '',
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sales_returns (
+        id TEXT PRIMARY KEY,
+        return_no INTEGER DEFAULT 0,
+        customer_id TEXT NOT NULL,
+        customer_name TEXT NOT NULL DEFAULT '',
+        amount_paise INTEGER DEFAULT 0,
+        note TEXT DEFAULT '',
+        return_date INTEGER DEFAULT 0,
+        return_day TEXT DEFAULT '',
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sales_return_items (
+        id TEXT PRIMARY KEY,
+        return_id TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        qty REAL DEFAULT 0,
+        rate_paise INTEGER DEFAULT 0,
+        amount_paise INTEGER DEFAULT 0,
+        created_at INTEGER DEFAULT 0,
+        updated_at INTEGER DEFAULT 0,
+        is_deleted INTEGER DEFAULT 0,
+        dirty INTEGER DEFAULT 1
+      )
+    ''');
+    // purchases header upgrades (older installs carry the old shape)
+    for (final col in [
+      "ALTER TABLE purchases ADD COLUMN supplier_id TEXT DEFAULT ''",
+      "ALTER TABLE purchases ADD COLUMN party_bill_no TEXT DEFAULT ''",
+      'ALTER TABLE purchases ADD COLUMN subtotal_paise INTEGER DEFAULT 0',
+      'ALTER TABLE purchases ADD COLUMN gst_total_paise INTEGER DEFAULT 0',
+      'ALTER TABLE purchases ADD COLUMN parcel_paise INTEGER DEFAULT 0',
+    ]) {
+      try {
+        await db.execute(col);
+      } catch (_) {} // column already there on a fresh create
+    }
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items (purchase_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pr_items_return ON purchase_return_items (return_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sr_items_return ON sales_return_items (return_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers (name)');
   }
 
   static Future<void> _onCreate(Database db, int version) async {
@@ -211,6 +353,9 @@ class DB {
     await _createPurchases(db);
 
     await _createDispatch(db);
+
+    // v0.3.0 purchase module (suppliers, items+GST, returns, payments)
+    await _createPurchaseModule(db);
 
     // v0.2.20 FIX: every index here uses IF NOT EXISTS. _createPurchases
     // already creates idx_purchases_day, so the bare duplicate

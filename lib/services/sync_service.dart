@@ -146,9 +146,16 @@ class SyncService {
     await _pushFlat(db, 'customers');
     await _pushFlat(db, 'products');
     await _pushFlat(db, 'payments');
-    await _pushFlat(db, 'purchases');
+    await _pushFlat(db, 'suppliers');
+    await _pushFlat(db, 'supplier_payments');
     await _pushFlat(db, 'bill_dispatch');
     await _pushBills(db);
+    // v0.3.0: purchases with their items embedded (one document per
+    // purchase bill, exactly like bills), plus purchase/sales returns
+    // with their item lines embedded.
+    await _pushWithItems(db, 'purchases', 'purchase_items', 'purchase_id', 200);
+    await _pushWithItems(db, 'purchase_returns', 'purchase_return_items', 'return_id', 200);
+    await _pushWithItems(db, 'sales_returns', 'sales_return_items', 'return_id', 200);
   }
 
   Future<void> _pushFlat(Database db, String table) async {
@@ -201,23 +208,85 @@ class SyncService {
   /// every previously missed row) and then the per-table cursors are
   /// stored.
   Future<void> _pullAll(Database db) async {
-    for (final table in ['customers', 'products', 'payments', 'purchases', 'bill_dispatch']) {
+    for (final table in [
+      'customers', 'products', 'payments', 'bill_dispatch',
+      'suppliers', 'supplier_payments', 'purchase_items',
+      'purchase_return_items', 'sales_return_items',
+    ]) {
       final last = int.tryParse(await Repo.instance.getMeta('last_sync_ms_$table') ?? '') ?? 0;
       final cursor = await _pullFlat(db, table, last);
       if (cursor > last) {
         await Repo.instance.setMeta('last_sync_ms_$table', '$cursor');
       }
     }
-    final lastBills = int.tryParse(await Repo.instance.getMeta('last_sync_ms_bills') ?? '') ?? 0;
-    final cursorBills = await _pullBills(db, lastBills);
-    if (cursorBills > lastBills) {
-      await Repo.instance.setMeta('last_sync_ms_bills', '$cursorBills');
+    // Header tables whose documents embed their item lines.
+    for (final spec in [
+      ('bills', 'bill_items', 'bill_id'),
+      ('purchases', 'purchase_items', 'purchase_id'),
+      ('purchase_returns', 'purchase_return_items', 'return_id'),
+      ('sales_returns', 'sales_return_items', 'return_id'),
+    ]) {
+      final last = int.tryParse(
+              await Repo.instance.getMeta('last_sync_ms_${spec.$1}') ?? '') ?? 0;
+      final cursor = await _pullWithItems(db, spec.$1, spec.$2, spec.$3, last);
+      if (cursor > last) {
+        await Repo.instance.setMeta('last_sync_ms_${spec.$1}', '$cursor');
+      }
     }
   }
 
   /// Pages with startAfterDocument (not a numeric where) so rows that
   /// share the exact same updated_at are never skipped at a page
   /// boundary inside one pull.
+  /// Generic "header + item lines embedded in the document" push, used by
+  /// bills, purchases and the two return ledgers.
+  Future<void> _pushWithItems(Database db, String table, String itemsTable,
+      String fkColumn, int limit) async {
+    final heads = await db.rawQuery(
+        'SELECT * FROM $table WHERE dirty = 1 LIMIT $limit');
+    if (heads.isEmpty) return;
+    final batch = FirebaseFirestore.instance.batch();
+    final ids = <String>[];
+    for (final r in heads) {
+      final map = Map<String, Object?>.from(r)..remove('dirty');
+      final id = map['id'] as String;
+      final items = await db.rawQuery(
+          'SELECT * FROM $itemsTable WHERE $fkColumn = ?', [id]);
+      map['items'] = items.map((e) {
+        final m = Map<String, Object?>.from(e)..remove('dirty');
+        return m;
+      }).toList();
+      batch.set(_coll(table).doc(id), map);
+      ids.add(id);
+    }
+    await batch.commit();
+    final idList = ids.map(_quote).join(',');
+    await db.execute('UPDATE $table SET dirty = 0 WHERE id IN ($idList)');
+    await db.execute(
+        'UPDATE $itemsTable SET dirty = 0 WHERE $fkColumn IN ($idList) AND is_deleted = 0');
+    // tombstoned item lines must still travel once: push them flat so the
+    // other device learns about the delete
+    await _pushDeletedItemLines(db, itemsTable, fkColumn, ids);
+  }
+
+  /// Tombstoned item lines of freshly-pushed headers are pushed flat so
+  /// the pen-edit/delete of a bill reaches the other device.
+  Future<void> _pushDeletedItemLines(Database db, String itemsTable,
+      String fkColumn, List<String> headIds) async {
+    final idList = headIds.map(_quote).join(',');
+    final rows = await db.rawQuery(
+        'SELECT * FROM $itemsTable WHERE dirty = 1 AND $fkColumn IN ($idList)');
+    if (rows.isEmpty) return;
+    final batch = FirebaseFirestore.instance.batch();
+    for (final r in rows) {
+      final map = Map<String, Object?>.from(r)..remove('dirty');
+      batch.set(_coll(itemsTable).doc(map['id'] as String), map);
+    }
+    await batch.commit();
+    await db.execute(
+        'UPDATE $itemsTable SET dirty = 0 WHERE id IN (${rows.map((r) => _quote(r['id'] as String)).join(',')})');
+  }
+
   Future<int> _pullFlat(Database db, String table, int after) async {
     var cursor = after;
     DocumentSnapshot<Map<String, dynamic>>? lastDoc;
@@ -241,11 +310,14 @@ class SyncService {
     }
   }
 
-  Future<int> _pullBills(Database db, int after) async {
+  /// Pull for header tables whose documents embed their item lines
+  /// (bills since v1, purchases / returns since v0.3.0).
+  Future<int> _pullWithItems(Database db, String table, String itemsTable,
+      String fkColumn, int after) async {
     var cursor = after;
     DocumentSnapshot<Map<String, dynamic>>? lastDoc;
     while (true) {
-      Query<Map<String, dynamic>> q = _coll('bills').orderBy('updated_at').limit(100);
+      Query<Map<String, dynamic>> q = _coll(table).orderBy('updated_at').limit(100);
       if (lastDoc != null) {
         q = q.startAfterDocument(lastDoc);
       } else if (after > 0) {
@@ -256,20 +328,20 @@ class SyncService {
         final data = Map<String, dynamic>.from(d.data());
         data['id'] ??= d.id;
         final itemsRaw = (data.remove('items') as List?) ?? const [];
-        // v0.2.20 FIX: only replace local items when the remote bill row
+        // v0.2.20 FIX: only replace local items when the remote header row
         // was ACTUALLY applied (strictly newer). The old code deleted and
         // re-inserted items unconditionally, so a remote snapshot that
         // LOST the last-write-wins race still destroyed the local item
-        // lines of the winning bill row.
-        final applied = await _applyRemote(db, 'bills', data);
+        // lines of the winning row.
+        final applied = await _applyRemote(db, table, data);
         if (applied) {
-          final billId = data['id'] as String;
-          await db.delete('bill_items', where: 'bill_id = ?', whereArgs: [billId]);
+          final headId = data['id'] as String;
+          await db.delete(itemsTable, where: '$fkColumn = ?', whereArgs: [headId]);
           for (final it in itemsRaw) {
             final m = Map<String, Object?>.from(it as Map);
             m['dirty'] = 0;
-            m['bill_id'] ??= billId;
-            await db.insert('bill_items', m, conflictAlgorithm: ConflictAlgorithm.replace);
+            m[fkColumn] ??= headId;
+            await db.insert(itemsTable, m, conflictAlgorithm: ConflictAlgorithm.replace);
           }
         }
         final ua = _toInt(data['updated_at']);

@@ -38,7 +38,12 @@ class Repo {
   Future<int> getPendingDirtyCount() async {
     final db = await _db;
     int n = 0;
-    for (final t in ['customers', 'products', 'bills', 'payments', 'purchases']) {
+    for (final t in [
+      'customers', 'products', 'bills', 'payments', 'purchases',
+      'purchase_items', 'suppliers', 'purchase_returns',
+      'purchase_return_items', 'supplier_payments', 'sales_returns',
+      'sales_return_items',
+    ]) {
       final r = await db.rawQuery('SELECT COUNT(*) c FROM $t WHERE dirty = 1');
       n += (r.first['c'] as int?) ?? 0;
     }
@@ -209,42 +214,6 @@ class Repo {
     return (rows.first['next'] as int?) ?? 1;
   }
 
-  /// Saves one purchase invoice. [date] may be back-dated like bills.
-  /// [photoPath] is a local file copied into the app's documents folder
-  /// (picture of the paper bill, clicked or picked from gallery).
-  Future<Purchase> savePurchase({
-    required String supplierName,
-    String supplierPhone = '',
-    required int amountPaise,
-    String note = '',
-    String photoPath = '',
-    DateTime? date,
-  }) async {
-    final db = await _db;
-    final now = _now();
-    final chosen = date ?? DateTime.now();
-    final ms = chosen.millisecondsSinceEpoch;
-
-    final noRows = await db.rawQuery('SELECT COALESCE(MAX(purchase_no), 0) + 1 AS next FROM purchases');
-    final no = (noRows.first['next'] as int?) ?? 1;
-
-    final purchase = Purchase(
-      id: _uuid.v4(),
-      purchaseNo: no,
-      supplierName: Sanitize.text(supplierName),
-      supplierPhone: Sanitize.digits(supplierPhone),
-      amountPaise: amountPaise,
-      note: Sanitize.text(note),
-      photoPath: photoPath,
-      purchaseDate: ms,
-      purchaseDay: _dayKey(ms),
-      createdAt: now,
-      updatedAt: now,
-    );
-    await db.insert('purchases', purchase.toMap());
-    return purchase;
-  }
-
   /// All purchase invoices, newest date first.
   Future<List<Purchase>> purchases() async {
     final db = await _db;
@@ -252,11 +221,6 @@ class Repo {
       'SELECT * FROM purchases WHERE is_deleted = 0 ORDER BY purchase_date DESC, created_at DESC',
     );
     return rows.map(Purchase.fromMap).toList();
-  }
-
-  Future<void> deletePurchase(String id) async {
-    final db = await _db;
-    await db.rawUpdate('UPDATE purchases SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', [_now(), id]);
   }
 
   // ---------------- billing ----------------
@@ -789,6 +753,12 @@ class Repo {
       SELECT id, pay_date, amount_paise, mode, note, proof_path, is_deleted FROM payments
       WHERE customer_id = ? AND is_deleted = 0
     ''', [customerId]);
+    // v0.3.0: SALES RETURNS credit the customer account (maal wapas aaya
+    // -> amount jama). Full item detail lives in sales_return_items.
+    final srRows = await db.rawQuery('''
+      SELECT id, return_no, return_date, amount_paise, note FROM sales_returns
+      WHERE customer_id = ? AND is_deleted = 0
+    ''', [customerId]);
 
     final entries = <LedgerEntry>[];
     int running = opening;
@@ -797,6 +767,7 @@ class Repo {
       final earliest = [
         ...billRows.map((r) => (r['bill_date'] as int?) ?? 0),
         ...payRows.map((r) => (r['pay_date'] as int?) ?? 0),
+        ...srRows.map((r) => (r['return_date'] as int?) ?? 0),
       ].fold<int>(DateTime.now().millisecondsSinceEpoch, (a, b) => b < a ? b : a);
       entries.add(LedgerEntry(
         kind: 'opening',
@@ -826,6 +797,14 @@ class Repo {
         'payment',
       ));
     }
+    for (final r in srRows) {
+      merged.add((
+        (r['return_date'] as int?) ?? 0,
+        1,
+        r,
+        'sales_return',
+      ));
+    }
     merged.sort((a, b) {
       final c = a.$1.compareTo(b.$1);
       if (c != 0) return c;
@@ -843,6 +822,21 @@ class Repo {
           date: DateTime.fromMillisecondsSinceEpoch((r['bill_date'] as int?) ?? 0),
           debitPaise: total,
           creditPaise: 0,
+          runningBalancePaise: running,
+        ));
+      } else if (kind == 'sales_return') {
+        final amt = (r['amount_paise'] as int?) ?? 0;
+        running -= amt;
+        final note = (r['note'] ?? '') as String;
+        entries.add(LedgerEntry(
+          kind: 'sales_return',
+          refId: r['id'] as String,
+          title: note.isNotEmpty
+              ? 'Sales return #${r['return_no']} - $note'
+              : 'Sales return #${r['return_no']}',
+          date: DateTime.fromMillisecondsSinceEpoch((r['return_date'] as int?) ?? 0),
+          debitPaise: 0,
+          creditPaise: amt,
           runningBalancePaise: running,
         ));
       } else {
@@ -987,8 +981,586 @@ class Repo {
     final d = DateTime.fromMillisecondsSinceEpoch(ms);
     return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
   }
-}
 
+
+  // ====================================================================
+  // v0.3.0 PURCHASE MODULE - suppliers, itemised purchase bills with
+  // per-product GST + parcel charges, supplier ledger, purchase returns,
+  // supplier payments and customer sales returns.
+  // ====================================================================
+
+  // ---------------- suppliers (purchase parties) ----------------
+
+  /// Suppliers with a computed balance:
+  /// balance = opening + purchases(+gst+parcel) - returns - payments.
+  /// Positive = we still owe the supplier (bakaya).
+  Future<List<Map<String, Object?>>> searchSuppliers(String query) async {
+    final db = await _db;
+    final q = query.trim();
+    final like = '%$q%';
+    final rows = await db.rawQuery('''
+      SELECT s.id, s.name, s.shop_name, s.city, s.phone,
+             IFNULL(pt.purchased, 0) AS purchased_paise,
+             IFNULL(rt.returned, 0) AS returned_paise,
+             IFNULL(pt2.paid, 0) AS paid_paise,
+             s.opening_balance_paise + IFNULL(pt.purchased, 0)
+               - IFNULL(rt.returned, 0) - IFNULL(pt2.paid, 0) AS balance_paise
+      FROM suppliers s
+      LEFT JOIN (
+        SELECT supplier_id, SUM(subtotal_paise + gst_total_paise + parcel_paise) AS purchased
+        FROM purchases WHERE is_deleted = 0 GROUP BY supplier_id
+      ) pt ON pt.supplier_id = s.id
+      LEFT JOIN (
+        SELECT supplier_id, SUM(amount_paise + gst_total_paise) AS returned
+        FROM purchase_returns WHERE is_deleted = 0 GROUP BY supplier_id
+      ) rt ON rt.supplier_id = s.id
+      LEFT JOIN (
+        SELECT supplier_id, SUM(amount_paise) AS paid
+        FROM supplier_payments WHERE is_deleted = 0 GROUP BY supplier_id
+      ) pt2 ON pt2.supplier_id = s.id
+      WHERE s.is_deleted = 0 AND (s.name LIKE ? OR s.city LIKE ? OR s.shop_name LIKE ?)
+      ORDER BY s.name COLLATE NOCASE
+    ''', [like, like, like]);
+    return rows;
+  }
+
+  Future<Supplier?> getSupplier(String id) async {
+    final db = await _db;
+    final rows = await db.rawQuery('SELECT * FROM suppliers WHERE id = ?', [id]);
+    if (rows.isEmpty) return null;
+    return Supplier.fromMap(rows.first);
+  }
+
+  Future<Supplier> newSupplier({
+    required String name,
+    String shopName = '',
+    String city = '',
+    String phone = '',
+    String address = '',
+    int openingBalancePaise = 0,
+  }) async {
+    final now = _now();
+    final sup = Supplier(
+      id: _uuid.v4(),
+      name: Sanitize.text(name),
+      shopName: Sanitize.text(shopName),
+      city: Sanitize.text(city),
+      phone: Sanitize.digits(phone),
+      address: Sanitize.multiline(address),
+      openingBalancePaise: openingBalancePaise,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final db = await _db;
+    await db.insert('suppliers', sup.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    return sup;
+  }
+
+  Future<void> upsertSupplier(Supplier sup) async {
+    final db = await _db;
+    final map = sup.toMap();
+    map['name'] = Sanitize.text(sup.name);
+    map['shop_name'] = Sanitize.text(sup.shopName);
+    map['city'] = Sanitize.text(sup.city);
+    map['phone'] = Sanitize.digits(sup.phone);
+    map['address'] = Sanitize.multiline(sup.address);
+    map['updated_at'] = _now();
+    map['dirty'] = 1;
+    await db.insert('suppliers', map, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteSupplier(String id) async {
+    final db = await _db;
+    await db.rawUpdate('UPDATE suppliers SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', [_now(), id]);
+  }
+
+  // ---------------- purchases v2 (itemised + GST + parcel) ----------------
+
+  /// Saves an itemised purchase bill atomically: header + item lines with
+  /// per-product GST. Total = subtotal + GST + parcel.
+  Future<Purchase> savePurchase({
+    required String supplierId,
+    required String supplierName,
+    String supplierPhone = '',
+    String partyBillNo = '',
+    required List<PurchaseCartLine> lines,
+    int parcelPaise = 0,
+    String note = '',
+    String photoPath = '',
+    DateTime? date,
+  }) async {
+    final db = await _db;
+    final now = _now();
+    final chosen = date ?? DateTime.now();
+    final ms = chosen.millisecondsSinceEpoch;
+
+    int subtotal = 0;
+    int gstTotal = 0;
+    for (final l in lines) {
+      subtotal += l.amountPaise;
+      gstTotal += l.gstPaise;
+    }
+    final total = subtotal + gstTotal + parcelPaise;
+
+    final noRows = await db.rawQuery('SELECT COALESCE(MAX(purchase_no), 0) + 1 AS next FROM purchases');
+    final no = (noRows.first['next'] as int?) ?? 1;
+
+    final purchase = Purchase(
+      id: _uuid.v4(),
+      purchaseNo: no,
+      supplierId: supplierId,
+      supplierName: Sanitize.text(supplierName),
+      supplierPhone: Sanitize.digits(supplierPhone),
+      partyBillNo: Sanitize.text(partyBillNo),
+      subtotalPaise: subtotal,
+      gstTotalPaise: gstTotal,
+      parcelPaise: parcelPaise,
+      amountPaise: total,
+      note: Sanitize.text(note),
+      photoPath: photoPath,
+      purchaseDate: ms,
+      purchaseDay: _dayKey(ms),
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    await db.transaction((txn) async {
+      await txn.insert('purchases', purchase.toMap());
+      for (final l in lines) {
+        final item = PurchaseItem(
+          id: _uuid.v4(),
+          purchaseId: purchase.id,
+          productId: l.productId,
+          productName: Sanitize.text(l.name),
+          qty: l.qty,
+          ratePaise: l.ratePaise,
+          gstPercent: l.gstPercent,
+          amountPaise: l.amountPaise,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await txn.insert('purchase_items', item.toMap());
+      }
+    });
+    return purchase;
+  }
+
+  /// Pen-edit of a saved purchase bill: same purchase number, lines and
+  /// totals recomputed, photo/note/date changeable.
+  Future<Purchase> updatePurchase({
+    required Purchase existing,
+    required List<PurchaseCartLine> lines,
+    required int parcelPaise,
+    String partyBillNo = '',
+    String supplierId = '',
+    String supplierName = '',
+    String note = '',
+    String photoPath = '',
+    DateTime? date,
+  }) async {
+    final db = await _db;
+    final now = _now();
+    final chosen = date ?? DateTime.fromMillisecondsSinceEpoch(existing.purchaseDate);
+
+    int subtotal = 0;
+    int gstTotal = 0;
+    for (final l in lines) {
+      subtotal += l.amountPaise;
+      gstTotal += l.gstPaise;
+    }
+    final total = subtotal + gstTotal + parcelPaise;
+    final ms = chosen.millisecondsSinceEpoch;
+
+    final updated = Purchase(
+      id: existing.id,
+      purchaseNo: existing.purchaseNo,
+      supplierId: supplierId.isNotEmpty ? supplierId : existing.supplierId,
+      supplierName: supplierName.isNotEmpty ? supplierName : existing.supplierName,
+      supplierPhone: existing.supplierPhone,
+      partyBillNo: partyBillNo,
+      subtotalPaise: subtotal,
+      gstTotalPaise: gstTotal,
+      parcelPaise: parcelPaise,
+      amountPaise: total,
+      note: note,
+      photoPath: photoPath.isNotEmpty ? photoPath : existing.photoPath,
+      purchaseDate: ms,
+      purchaseDay: _dayKey(ms),
+      createdAt: existing.createdAt,
+      updatedAt: now,
+      isDeleted: 0,
+      dirty: 1,
+    );
+
+    await db.transaction((txn) async {
+      await txn.update('purchases', updated.toMap(),
+          where: 'id = ?', whereArgs: [existing.id]);
+      await txn.rawUpdate(
+          'UPDATE purchase_items SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE purchase_id = ? AND is_deleted = 0',
+          [now, existing.id]);
+      for (final l in lines) {
+        final item = PurchaseItem(
+          id: _uuid.v4(),
+          purchaseId: existing.id,
+          productId: l.productId,
+          productName: Sanitize.text(l.name),
+          qty: l.qty,
+          ratePaise: l.ratePaise,
+          gstPercent: l.gstPercent,
+          amountPaise: l.amountPaise,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await txn.insert('purchase_items', item.toMap());
+      }
+    });
+    return updated;
+  }
+
+  Future<(Purchase, List<PurchaseItem>)> purchaseWithItems(String id) async {
+    final db = await _db;
+    final rows = await db.rawQuery('SELECT * FROM purchases WHERE id = ?', [id]);
+    final items = await db.rawQuery(
+      'SELECT * FROM purchase_items WHERE purchase_id = ? AND is_deleted = 0 ORDER BY created_at, id',
+      [id],
+    );
+    return (
+      Purchase.fromMap(rows.first),
+      items.map(PurchaseItem.fromMap).toList(),
+    );
+  }
+
+  Future<void> deletePurchase(String id) async {
+    final db = await _db;
+    final now = _now();
+    await db.transaction((txn) async {
+      await txn.rawUpdate(
+          'UPDATE purchases SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', [now, id]);
+      await txn.rawUpdate(
+          'UPDATE purchase_items SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE purchase_id = ? AND is_deleted = 0',
+          [now, id]);
+    });
+  }
+
+  // ---------------- supplier ledger ----------------
+
+  /// Full supplier account: opening + every purchase (+) and every
+  /// return / payment (-). Positive running = we owe the supplier.
+  Future<(int balancePaise, List<LedgerEntry> entries)> supplierLedger(String supplierId) async {
+    final db = await _db;
+    final supRows = await db.rawQuery(
+      'SELECT opening_balance_paise FROM suppliers WHERE id = ?',
+      [supplierId],
+    );
+    final opening = supRows.isEmpty ? 0 : ((supRows.first['opening_balance_paise'] ?? 0) as int);
+
+    final purchaseRows = await db.rawQuery('''
+      SELECT id, purchase_no, purchase_date, subtotal_paise, gst_total_paise, parcel_paise
+      FROM purchases WHERE supplier_id = ? AND is_deleted = 0
+    ''', [supplierId]);
+    final returnRows = await db.rawQuery('''
+      SELECT id, return_no, return_date, amount_paise, gst_total_paise, note
+      FROM purchase_returns WHERE supplier_id = ? AND is_deleted = 0
+    ''', [supplierId]);
+    final payRows = await db.rawQuery('''
+      SELECT id, pay_date, amount_paise, mode, note FROM supplier_payments
+      WHERE supplier_id = ? AND is_deleted = 0
+    ''', [supplierId]);
+
+    final entries = <LedgerEntry>[];
+    int running = opening;
+
+    if (opening != 0) {
+      final earliest = [
+        ...purchaseRows.map((r) => (r['purchase_date'] as int?) ?? 0),
+        ...returnRows.map((r) => (r['return_date'] as int?) ?? 0),
+        ...payRows.map((r) => (r['pay_date'] as int?) ?? 0),
+      ].fold<int>(_now(), (a, b) => b < a ? b : a);
+      entries.add(LedgerEntry(
+        kind: 'opening',
+        refId: '',
+        title: 'Opening balance',
+        date: DateTime.fromMillisecondsSinceEpoch(earliest).subtract(const Duration(seconds: 1)),
+        debitPaise: opening > 0 ? opening : 0,
+        creditPaise: opening < 0 ? -opening : 0,
+        runningBalancePaise: running,
+      ));
+    }
+
+    final merged = <(int, int, Map<String, Object?>, String)>[];
+    for (final r in purchaseRows) {
+      merged.add(((r['purchase_date'] as int?) ?? 0, 0, r, 'purchase'));
+    }
+    for (final r in returnRows) {
+      merged.add(((r['return_date'] as int?) ?? 0, 1, r, 'purchase_return'));
+    }
+    for (final r in payRows) {
+      merged.add(((r['pay_date'] as int?) ?? 0, 1, r, 'supplier_payment'));
+    }
+    merged.sort((a, b) {
+      final c = a.$1.compareTo(b.$1);
+      if (c != 0) return c;
+      return a.$2.compareTo(b.$2);
+    });
+
+    for (final (_, _, r, kind) in merged) {
+      if (kind == 'purchase') {
+        final amt = ((r['subtotal_paise'] ?? 0) as int) +
+            ((r['gst_total_paise'] ?? 0) as int) +
+            ((r['parcel_paise'] ?? 0) as int);
+        running += amt;
+        entries.add(LedgerEntry(
+          kind: 'purchase',
+          refId: r['id'] as String,
+          title: 'Purchase #${r['purchase_no']}',
+          date: DateTime.fromMillisecondsSinceEpoch((r['purchase_date'] as int?) ?? 0),
+          debitPaise: amt,
+          creditPaise: 0,
+          runningBalancePaise: running,
+        ));
+      } else if (kind == 'purchase_return') {
+        final amt = ((r['amount_paise'] ?? 0) as int) + ((r['gst_total_paise'] ?? 0) as int);
+        running -= amt;
+        final note = (r['note'] ?? '') as String;
+        entries.add(LedgerEntry(
+          kind: 'purchase_return',
+          refId: r['id'] as String,
+          title: note.isNotEmpty
+              ? 'Purchase return #${r['return_no']} - $note'
+              : 'Purchase return #${r['return_no']}',
+          date: DateTime.fromMillisecondsSinceEpoch((r['return_date'] as int?) ?? 0),
+          debitPaise: 0,
+          creditPaise: amt,
+          runningBalancePaise: running,
+        ));
+      } else {
+        final amt = (r['amount_paise'] as int?) ?? 0;
+        running -= amt;
+        final mode = (r['mode'] ?? 'cash') as String;
+        final note = (r['note'] ?? '') as String;
+        entries.add(LedgerEntry(
+          kind: 'supplier_payment',
+          refId: r['id'] as String,
+          title: note.isNotEmpty
+              ? 'Paid to supplier ($mode) - $note'
+              : 'Paid to supplier ($mode)',
+          date: DateTime.fromMillisecondsSinceEpoch((r['pay_date'] as int?) ?? 0),
+          debitPaise: 0,
+          creditPaise: amt,
+          runningBalancePaise: running,
+        ));
+      }
+    }
+    return (running, entries);
+  }
+
+  /// Money paid to a supplier (settlement). Returns the payment row.
+  Future<SupplierPayment> paySupplier({
+    required String supplierId,
+    required int amountPaise,
+    String mode = 'cash',
+    String note = '',
+    DateTime? date,
+  }) async {
+    final db = await _db;
+    final now = _now();
+    final chosen = date ?? DateTime.now();
+    final ms = chosen.millisecondsSinceEpoch;
+    final p = SupplierPayment(
+      id: _uuid.v4(),
+      supplierId: supplierId,
+      amountPaise: amountPaise,
+      payDate: ms,
+      payDay: _dayKey(ms),
+      mode: mode,
+      note: Sanitize.text(note),
+      createdAt: now,
+      updatedAt: now,
+    );
+    await db.insert('supplier_payments', p.toMap());
+    return p;
+  }
+
+  // ---------------- purchase returns ----------------
+
+  Future<int> nextPurchaseReturnNo() async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+        'SELECT COALESCE(MAX(return_no), 0) + 1 AS next FROM purchase_returns');
+    return (rows.first['next'] as int?) ?? 1;
+  }
+
+  Future<PurchaseReturn> savePurchaseReturn({
+    required String supplierId,
+    required String supplierName,
+    required List<PurchaseCartLine> lines,
+    String note = '',
+    DateTime? date,
+  }) async {
+    final db = await _db;
+    final now = _now();
+    final chosen = date ?? DateTime.now();
+    final ms = chosen.millisecondsSinceEpoch;
+
+    int subtotal = 0;
+    int gstTotal = 0;
+    for (final l in lines) {
+      subtotal += l.amountPaise;
+      gstTotal += l.gstPaise;
+    }
+
+    final noRows = await db.rawQuery(
+        'SELECT COALESCE(MAX(return_no), 0) + 1 AS next FROM purchase_returns');
+    final no = (noRows.first['next'] as int?) ?? 1;
+
+    final ret = PurchaseReturn(
+      id: _uuid.v4(),
+      returnNo: no,
+      supplierId: supplierId,
+      supplierName: Sanitize.text(supplierName),
+      amountPaise: subtotal,
+      gstTotalPaise: gstTotal,
+      note: Sanitize.text(note),
+      returnDate: ms,
+      returnDay: _dayKey(ms),
+      createdAt: now,
+      updatedAt: now,
+    );
+    await db.transaction((txn) async {
+      await txn.insert('purchase_returns', ret.toMap());
+      for (final l in lines) {
+        final item = PurchaseReturnItem(
+          id: _uuid.v4(),
+          returnId: ret.id,
+          productName: Sanitize.text(l.name),
+          qty: l.qty,
+          ratePaise: l.ratePaise,
+          gstPercent: l.gstPercent,
+          amountPaise: l.amountPaise,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await txn.insert('purchase_return_items', item.toMap());
+      }
+    });
+    return ret;
+  }
+
+  Future<List<PurchaseReturn>> purchaseReturns({String? supplierId}) async {
+    final db = await _db;
+    final rows = supplierId == null
+        ? await db.rawQuery(
+            'SELECT * FROM purchase_returns WHERE is_deleted = 0 ORDER BY return_date DESC, created_at DESC')
+        : await db.rawQuery(
+            'SELECT * FROM purchase_returns WHERE is_deleted = 0 AND supplier_id = ? ORDER BY return_date DESC, created_at DESC',
+            [supplierId]);
+    return rows.map(PurchaseReturn.fromMap).toList();
+  }
+
+  Future<List<PurchaseReturnItem>> purchaseReturnItems(String returnId) async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+      'SELECT * FROM purchase_return_items WHERE return_id = ? AND is_deleted = 0 ORDER BY created_at, id',
+      [returnId],
+    );
+    return rows.map(PurchaseReturnItem.fromMap).toList();
+  }
+
+  // ---------------- sales returns (customer) ----------------
+
+  Future<int> nextSalesReturnNo() async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+        'SELECT COALESCE(MAX(return_no), 0) + 1 AS next FROM sales_returns');
+    return (rows.first['next'] as int?) ?? 1;
+  }
+
+  /// Saves a customer sales return: the amount is CREDITED in the
+  /// customer ledger automatically (ledger() merges sales_returns in).
+  Future<SalesReturn> saveSalesReturn({
+    required String customerId,
+    required String customerName,
+    required List<CartLine> lines,
+    String note = '',
+    DateTime? date,
+  }) async {
+    final db = await _db;
+    final now = _now();
+    final chosen = date ?? DateTime.now();
+    final ms = chosen.millisecondsSinceEpoch;
+
+    int amount = 0;
+    for (final l in lines) {
+      amount += l.amountPaise;
+    }
+
+    final noRows = await db.rawQuery(
+        'SELECT COALESCE(MAX(return_no), 0) + 1 AS next FROM sales_returns');
+    final no = (noRows.first['next'] as int?) ?? 1;
+
+    final ret = SalesReturn(
+      id: _uuid.v4(),
+      returnNo: no,
+      customerId: customerId,
+      customerName: customerName,
+      amountPaise: amount,
+      note: Sanitize.text(note),
+      returnDate: ms,
+      returnDay: _dayKey(ms),
+      createdAt: now,
+      updatedAt: now,
+    );
+    await db.transaction((txn) async {
+      await txn.insert('sales_returns', ret.toMap());
+      for (final l in lines) {
+        final item = SalesReturnItem(
+          id: _uuid.v4(),
+          returnId: ret.id,
+          productName: Sanitize.text(l.name),
+          qty: l.qty,
+          ratePaise: l.ratePaise,
+          amountPaise: l.amountPaise,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await txn.insert('sales_return_items', item.toMap());
+      }
+    });
+    return ret;
+  }
+
+  Future<List<SalesReturn>> salesReturns({String? customerId}) async {
+    final db = await _db;
+    final rows = customerId == null
+        ? await db.rawQuery(
+            'SELECT * FROM sales_returns WHERE is_deleted = 0 ORDER BY return_date DESC, created_at DESC')
+        : await db.rawQuery(
+            'SELECT * FROM sales_returns WHERE is_deleted = 0 AND customer_id = ? ORDER BY return_date DESC, created_at DESC',
+            [customerId]);
+    return rows.map(SalesReturn.fromMap).toList();
+  }
+
+  Future<List<SalesReturnItem>> salesReturnItems(String returnId) async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+      'SELECT * FROM sales_return_items WHERE return_id = ? AND is_deleted = 0 ORDER BY created_at, id',
+      [returnId],
+    );
+    return rows.map(SalesReturnItem.fromMap).toList();
+  }
+
+  Future<void> deleteSalesReturn(String id) async {
+    final db = await _db;
+    final now = _now();
+    await db.transaction((txn) async {
+      await txn.rawUpdate(
+          'UPDATE sales_returns SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', [now, id]);
+      await txn.rawUpdate(
+          'UPDATE sales_return_items SET is_deleted = 1, updated_at = ?, dirty = 1 WHERE return_id = ? AND is_deleted = 0',
+          [now, id]);
+    });
+  }
+}
 extension _ProductCopy on Product {
   Product copyWith({int? updatedAt}) => Product(
         id: id,

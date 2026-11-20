@@ -19,6 +19,7 @@ import '../bills/bill_view_screen.dart';
 import '../billing/billing_screen.dart';
 import '../../widgets/widgets.dart';
 import '../customer/customer_search_screen.dart';
+import '../customer/sales_return_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../purchase/purchase_screen.dart';
 import '../reports/reports_screen.dart';
@@ -949,6 +950,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               }),
             _menuCard(Icons.local_shipping_outlined, 'Purchase Invoices', () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseScreen()));
+            }),
+            _menuCard(Icons.keyboard_return, 'Sales Return (Customer)', () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesReturnScreen()));
             }),
             _menuCard(Icons.account_balance_wallet_outlined, 'Accounts (Hisab)', () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()));

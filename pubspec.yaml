@@ -56,6 +56,11 @@ dependencies:
   # Purchase bill photo (camera / gallery)
   image_picker: ^1.1.2
 
+  # AI bill scan: on-device text recognition reads the supplier's paper
+  # bill photo and the parser pre-fills the purchase form. No cloud,
+  # no data leaves the phone.
+  google_mlkit_text_recognition: ^1.0.3
+
   # Cloud Storage - bilty / receipt photos sync (compressed to <= 300 KB)
   firebase_storage: ^12.3.0
 

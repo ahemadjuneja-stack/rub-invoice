@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../core/app_log.dart';
 import '../core/formatters.dart';
+import '../data/repo.dart';
 import '../models/models.dart';
 
 /// Bill PDFs in three formats:
@@ -456,6 +457,301 @@ class PdfService {
       cellPadding:
           const pw.EdgeInsets.symmetric(vertical: 3.5, horizontal: 6),
     );
+  }
+
+  // ================= A4 PURCHASE memo (v0.3.0) =================
+
+  Future<void> sharePurchase({
+    required Purchase purchase,
+    required List<PurchaseItem> items,
+  }) async {
+    final f = await buildPurchaseFile(purchase: purchase, items: items);
+    await Share.shareXFiles(
+      [XFile(f.path)],
+      subject: 'Purchase #${purchase.purchaseNo} - ${purchase.supplierName}',
+      text: 'Purchase #${purchase.purchaseNo} - ${Money.fmt(purchase.amountPaise)}',
+    );
+  }
+
+  Future<File> buildPurchaseFile({
+    required Purchase purchase,
+    required List<PurchaseItem> items,
+  }) async {
+    await _loadFonts();
+    final doc = pw.Document(
+      theme: pw.ThemeData.withFont(base: _regular!, bold: _bold!),
+    );
+
+    final shop = await Repo.instance.shopProfile();
+    final shopName = (shop['shop_name'] ?? '').isNotEmpty
+        ? shop['shop_name']!
+        : 'Ruby Invoice';
+    final shopAddr = shop['shop_addr'] ?? '';
+    final shopPhone = shop['shop_phone'] ?? '';
+    final (logo, sign) = await loadBranding();
+
+    const perPage = 25;
+    final chunks = <List<PurchaseItem>>[];
+    for (var i = 0; i < items.length; i += perPage) {
+      chunks.add(items.sublist(
+          i, (i + perPage) > items.length ? items.length : (i + perPage)));
+    }
+    if (chunks.isEmpty) chunks.add(const []);
+
+    for (var p = 0; p < chunks.length; p++) {
+      final last = p == chunks.length - 1;
+      doc.addPage(pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.fromLTRB(28, 26, 28, 24),
+        build: (_) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                if (logo != null)
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(right: 12),
+                    child: pw.Image(logo, height: 62, fit: pw.BoxFit.contain),
+                  ),
+                pw.Expanded(
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(shopName.toUpperCase(),
+                          style: pw.TextStyle(
+                              fontSize: 15, fontWeight: pw.FontWeight.bold)),
+                      if (shopAddr.isNotEmpty)
+                        pw.Text(shopAddr,
+                            style: const pw.TextStyle(fontSize: 8.5)),
+                      if (shopPhone.isNotEmpty)
+                        pw.Text('Ph: $shopPhone',
+                            style: const pw.TextStyle(fontSize: 8.5)),
+                    ],
+                  ),
+                ),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.Text('PURCHASE MEMO',
+                        style: pw.TextStyle(
+                            fontSize: 15,
+                            fontWeight: pw.FontWeight.bold,
+                            letterSpacing: 1)),
+                    pw.Text('No: ${purchase.purchaseNo}',
+                        style: const pw.TextStyle(fontSize: 9.5)),
+                    pw.Text(Dt.fmtDayKey(purchase.purchaseDay),
+                        style: const pw.TextStyle(fontSize: 9.5)),
+                  ],
+                ),
+              ],
+            ),
+            pw.Container(
+              margin: const pw.EdgeInsets.symmetric(vertical: 7),
+              height: 1.2,
+              color: PdfColors.black,
+            ),
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(8),
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(width: 0.8),
+                borderRadius:
+                    const pw.BorderRadius.all(pw.Radius.circular(4)),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('PURCHASE FROM',
+                      style: pw.TextStyle(
+                          fontSize: 7, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(purchase.supplierName,
+                      style: pw.TextStyle(
+                          fontSize: 11.5, fontWeight: pw.FontWeight.bold)),
+                  if (purchase.supplierPhone.isNotEmpty)
+                    pw.Text(purchase.supplierPhone,
+                        style: const pw.TextStyle(fontSize: 9)),
+                  if (purchase.partyBillNo.isNotEmpty)
+                    pw.Text('Party bill no: ${purchase.partyBillNo}',
+                        style: const pw.TextStyle(fontSize: 9)),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 8),
+            if (chunks.length > 1)
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(bottom: 3),
+                child: pw.Text('Items (page ${p + 1} of ${chunks.length})',
+                    style: pw.TextStyle(
+                        fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+              ),
+            pw.TableHelper.fromTextArray(
+              headers: ['#', 'Product', 'Qty', 'Rate', 'GST%', 'Amount'],
+              data: [
+                for (var i = 0; i < chunks[p].length; i++)
+                  [
+                    '${p * perPage + i + 1}',
+                    chunks[p][i].productName,
+                    _qtyText(chunks[p][i].qty),
+                    Money.fmt(chunks[p][i].ratePaise, withSymbol: false),
+                    chunks[p][i].gstPercent == 0
+                        ? '-'
+                        : chunks[p][i].gstPercent.toStringAsFixed(0),
+                    Money.fmt(chunks[p][i].amountPaise, withSymbol: false),
+                  ]
+              ],
+              columnWidths: const {
+                0: pw.FixedColumnWidth(28),
+                1: pw.FlexColumnWidth(4.6),
+                2: pw.FlexColumnWidth(1.4),
+                3: pw.FlexColumnWidth(1.9),
+                4: pw.FlexColumnWidth(1.1),
+                5: pw.FlexColumnWidth(2.3),
+              },
+              headerStyle: pw.TextStyle(
+                  fontSize: 9, fontWeight: pw.FontWeight.bold),
+              cellStyle: const pw.TextStyle(fontSize: 9),
+              cellAlignment: pw.Alignment.centerLeft,
+              headerDecoration:
+                  const pw.BoxDecoration(color: PdfColors.grey200),
+              border: pw.TableBorder.all(width: 0.6),
+              cellPadding:
+                  const pw.EdgeInsets.symmetric(vertical: 3.5, horizontal: 6),
+            ),
+            if (last) ...[
+              pw.SizedBox(height: 10),
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(
+                    child: purchase.note.isNotEmpty
+                        ? pw.Text('Note: ${purchase.note}',
+                            style: const pw.TextStyle(fontSize: 8.5))
+                        : pw.SizedBox(),
+                  ),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: [
+                      pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.end,
+                          children: [
+                            pw.Text('Subtotal (maal)',
+                                style: const pw.TextStyle(fontSize: 10)),
+                            pw.SizedBox(width: 14),
+                            pw.Text(Money.fmt(purchase.subtotalPaise),
+                                style: const pw.TextStyle(fontSize: 10)),
+                          ]),
+                      pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.end,
+                          children: [
+                            pw.Text('GST total',
+                                style: const pw.TextStyle(fontSize: 10)),
+                            pw.SizedBox(width: 14),
+                            pw.Text(Money.fmt(purchase.gstTotalPaise),
+                                style: const pw.TextStyle(fontSize: 10)),
+                          ]),
+                      pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.end,
+                          children: [
+                            pw.Text('Parcel / transport',
+                                style: const pw.TextStyle(fontSize: 10)),
+                            pw.SizedBox(width: 14),
+                            pw.Text(Money.fmt(purchase.parcelPaise),
+                                style: const pw.TextStyle(fontSize: 10)),
+                          ]),
+                      pw.SizedBox(height: 4),
+                      pw.Container(
+                        width: 200,
+                        padding: const pw.EdgeInsets.symmetric(
+                            vertical: 6, horizontal: 9),
+                        decoration: pw.BoxDecoration(
+                          border: pw.Border.all(width: 1),
+                          borderRadius: const pw.BorderRadius.all(
+                              pw.Radius.circular(4)),
+                          color: PdfColors.grey100,
+                        ),
+                        child: pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pw.Text('GRAND TOTAL',
+                                style: pw.TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: pw.FontWeight.bold)),
+                            pw.Text(Money.fmt(purchase.amountPaise),
+                                style: pw.TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: pw.FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              pw.Spacer(),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.end,
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Column(
+                    children: [
+                      if (sign != null)
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.only(bottom: 2),
+                          child: pw.Image(sign,
+                              height: 46, fit: pw.BoxFit.contain),
+                        ),
+                      pw.Container(
+                        width: 150,
+                        decoration: const pw.BoxDecoration(
+                            border: pw.Border(
+                                bottom: pw.BorderSide(width: 0.8))),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text('For $shopName',
+                          style: pw.TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: pw.FontWeight.bold)),
+                      pw.Text('Received the above goods',
+                          style: const pw.TextStyle(fontSize: 7.5)),
+                    ],
+                  ),
+                ],
+              ),
+            ] else ...[
+              pw.Spacer(),
+              pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Text('Continued on next page...',
+                    style: const pw.TextStyle(fontSize: 8.5)),
+              ),
+            ],
+            pw.Spacer(),
+            pw.Container(
+              margin: const pw.EdgeInsets.only(top: 6),
+              decoration: const pw.BoxDecoration(
+                  border: pw.Border(top: pw.BorderSide(width: 0.6))),
+            ),
+            pw.SizedBox(height: 4),
+            pw.Center(
+              child: pw.Text(
+                [
+                  if (shopPhone.isNotEmpty) shopPhone,
+                  'Powered by Ruby Invoice',
+                ].join('   |   '),
+                style: const pw.TextStyle(fontSize: 7.5),
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+
+    final dir = await getTemporaryDirectory();
+    final f = File(
+        '${dir.path}/purchase_${purchase.purchaseNo}_${purchase.purchaseDay}.pdf');
+    await f.writeAsBytes(await doc.save());
+    return f;
   }
 
   // ---------- 80mm thermal receipt ----------

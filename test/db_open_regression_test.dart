@@ -97,13 +97,25 @@ void main() {
       lines: [CartLine(name: 'Saree', qty: 1, ratePaise: 50000)],
     );
     await Repo.instance.saveDispatch(billId: bill.id, mode: 'transport');
-    await Repo.instance.savePurchase(supplierName: 'Supplier', amountPaise: 70000);
+    await Repo.instance.savePurchase(
+      supplierId: 'sup-1',
+      supplierName: 'Supplier',
+      lines: [PurchaseCartLine(name: 'Maal', qty: 2, ratePaise: 35000)],
+    );
+    await Repo.instance.saveSalesReturn(
+      customerId: c.id,
+      customerName: c.name,
+      lines: [CartLine(name: 'Saree', qty: 1, ratePaise: 50000)],
+    );
     await Repo.instance.addPayment(customerId: c.id, amountPaise: 20000, mode: 'upi', date: DateTime.now());
     final ec = await Repo.instance.getCustomer(c.id);
     await Repo.instance.upsertCustomer(ec!.copyWith(name: 'Dirty Check 2'));
 
     final db = await DB.open();
-    for (final t in ['customers', 'bills', 'bill_items', 'bill_dispatch', 'purchases', 'payments']) {
+    for (final t in [
+      'customers', 'bills', 'bill_items', 'bill_dispatch', 'purchases',
+      'purchase_items', 'payments', 'sales_returns', 'sales_return_items',
+    ]) {
       final rows = await db.rawQuery('SELECT COUNT(*) c FROM $t WHERE dirty = 1');
       expect((rows.first['c'] as int?) ?? 0, greaterThan(0), reason: '$t must have dirty rows to push');
     }
