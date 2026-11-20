@@ -1,7 +1,9 @@
 // Ruby Key - the admin panel for Ruby Invoice.
 // Dark, mobile-first PWA. Manages the `users` and `subscriptions`
-// collections plus the `config/app` remote-control document - never
-// the private shops/{uid} data.
+// collections plus the `config/app` remote-control document.
+// v0.3.0: READ-ONLY support view of a user's shops/{uid} data (bills,
+// ledger, inventory, purchases, returns) - "user ka sara data Ruby Key
+// par". Writes to shops/{uid} stay impossible (firestore.rules v4).
 //
 // Security:
 //   * Google sign-in only (no sign-up).
@@ -16,6 +18,7 @@ import {
 import {
   getFirestore, collection, onSnapshot, doc, updateDoc, addDoc,
   getDoc, setDoc, serverTimestamp, Timestamp,
+  getDocs, query, orderBy, limit,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const cfg = window.RUBY_FIREBASE_CONFIG || {};
@@ -67,10 +70,11 @@ const fmtDate = (d) => d
   ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
   : '-';
 
+// v0.3.0: no trial anymore - validity = subscriptionEndDate ?? expiryDate.
+// Legacy trialEndDate values are IGNORED (old accounts stay usable until
+// the admin sets a real end date or blocks them).
 function effectiveEnd(u) {
-  return toDate(u.subscriptionEndDate) ||
-    (u.plan === 'trial' ? toDate(u.trialEndDate) : null) ||
-    toDate(u.expiryDate);
+  return toDate(u.subscriptionEndDate) || toDate(u.expiryDate);
 }
 
 function daysLeft(u) {
@@ -85,7 +89,6 @@ function userTag(u) {
   const dl = daysLeft(u);
   if (dl !== null && dl < 0) return ['expired', 'EXPIRED'];
   if (u.plan === 'paid' || toDate(u.subscriptionEndDate)) return ['paid', 'PAID'];
-  if (u.plan === 'trial') return ['trial', `TRIAL ${Math.max(0, dl ?? 0)}D`];
   return ['legacy', 'ACTIVE'];
 }
 
@@ -111,7 +114,7 @@ function renderLogin() {
     <div class="center">
       <div class="boot-logo">R</div>
       <div class="big">Ruby Key</div>
-      <div class="small">Admin panel for Ruby Invoice - users, trials, subscriptions and devices.</div>
+      <div class="small">Admin panel for Ruby Invoice - users, validity, subscriptions and devices.</div>
       <button class="google-btn" id="loginBtn">
         <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.8-6.8C35.6 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.2C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.2C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.6l-7.7-6c-2.1 1.4-4.7 2.3-7.5 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.2C6.5 42.6 14.6 48 24 48z"/></svg>
         Continue with Google
@@ -271,17 +274,17 @@ function listenConfig() {
 function paintStats() {
   const el = document.getElementById('stats');
   if (!el) return;
-  let trials = 0, paid = 0, expired = 0, blocked = 0;
+  let free = 0, paid = 0, expired = 0, blocked = 0;
   for (const u of users) {
     const [tag] = userTag(u);
-    if (tag === 'trial') trials++;
-    else if (tag === 'paid') paid++;
+    if (tag === 'paid') paid++;
     else if (tag === 'expired') expired++;
     else if (tag === 'blocked') blocked++;
+    else free++;
   }
   el.innerHTML = `
     <div class="stat"><div class="n">${users.length}</div><div class="l">Total Users</div></div>
-    <div class="stat amber"><div class="n">${trials}</div><div class="l">Active Trials</div></div>
+    <div class="stat amber"><div class="n">${free}</div><div class="l">Active (free)</div></div>
     <div class="stat green"><div class="n">${paid}</div><div class="l">Paid Subs</div></div>
     <div class="stat"><div class="n" style="color:#ff8a8f">${expired}</div><div class="l">Expired</div></div>
     <div class="stat"><div class="n" style="color:#ff8a8f">${blocked}</div><div class="l">Blocked</div></div>`;
@@ -331,8 +334,6 @@ function userCard(u) {
     <div class="details">
       <div class="kv"><div class="k">Address</div><div class="v">${esc(u.address || '-')}</div></div>
       <div class="kv"><div class="k">GST</div><div class="v">${esc(u.gst || '-')}</div></div>
-      <div class="kv"><div class="k">Trial started</div><div class="v">${fmtDate(toDate(u.trialStartDate))}</div></div>
-      <div class="kv"><div class="k">Trial end</div><div class="v">${fmtDate(toDate(u.trialEndDate))}</div></div>
       <div class="kv"><div class="k">Subscription end</div><div class="v">${fmtDate(toDate(u.subscriptionEndDate))}</div></div>
       <div class="kv"><div class="k">Registered</div><div class="v">${fmtDate(toDate(u.createdAt))}</div></div>
       <div class="dev-list" id="dev-${cssId(id)}">
@@ -355,6 +356,7 @@ function userCard(u) {
         ? `<button class="btn green" data-act="unblock" data-id="${esc(id)}">Unblock</button>`
         : `<button class="btn red" data-act="block" data-id="${esc(id)}">Block</button>`}
       <button class="btn" data-act="resetdev" data-id="${esc(id)}">Reset Devices</button>
+      <button class="btn" data-act="viewdata" data-id="${esc(id)}">Data</button>
       ${wa ? `<a class="btn wa" href="${wa}" target="_blank" rel="noopener">WhatsApp</a>` : ''}
       ${tel ? `<a class="btn tel" href="${tel}">Call</a>` : ''}
     </div>
@@ -378,6 +380,7 @@ function bindCard(u) {
       else if (act === 'unblock') { unblockUser(u2); }
       else if (act === 'resetdev') { resetDevices(u2); }
       else if (act === 'rmdev') { removeDevice(u2, btn.dataset.dev); }
+      else if (act === 'viewdata') { openUserData(u2); }
       else if (act === 'ext') { extendUser(u2, Number(btn.dataset.days)); }
       else if (act === 'extd') {
         const v = document.getElementById(`dt-${cssId(id)}`).value;
@@ -463,6 +466,125 @@ async function extendUser(u, days, customDate = null) {
     });
     toast(`Extended till ${fmtDate(base)}`);
   } catch (e) { toast('Failed: ' + e.code, true); }
+}
+
+// ------------------------------------------------- user data (support)
+// Read-only browser of a user's own shop data (rules v4 allow the admin
+// to READ shops/{uid}; no write path exists). Used for support: "kya
+// problem aa rahi hai" can be answered from the real records.
+const SHOP_COLLECTIONS = [
+  ['bills', 'Bills'],
+  ['payments', 'Payments (jama)'],
+  ['customers', 'Customers'],
+  ['products', 'Inventory'],
+  ['purchases', 'Purchases'],
+  ['suppliers', 'Purchase parties'],
+  ['purchase_returns', 'Purchase returns'],
+  ['sales_returns', 'Sales returns'],
+];
+
+let dataOverlay = null;
+
+async function openUserData(u) {
+  closeDataOverlay();
+  dataOverlay = document.createElement('div');
+  dataOverlay.className = 'data-overlay';
+  dataOverlay.innerHTML = `
+    <div class="data-panel">
+      <div class="data-head">
+        <div>
+          <div class="data-title">${esc(u.businessName || 'User data')}</div>
+          <div class="data-sub">${esc(u.email || '')} - read-only support view</div>
+        </div>
+        <button class="btn" id="dataClose">Close</button>
+      </div>
+      <div class="data-grid" id="dataGrid"><div class="empty">Loading...</div></div>
+      <div class="data-list" id="dataList"></div>
+    </div>`;
+  document.body.appendChild(dataOverlay);
+  document.getElementById('dataClose').onclick = closeDataOverlay;
+
+  const grid = document.getElementById('dataGrid');
+  const list = document.getElementById('dataList');
+  const counts = [];
+  for (const [name, label] of SHOP_COLLECTIONS) {
+    let n = null;
+    try {
+      const snap = await getDocs(query(collection(db, 'shops', u._id, name), limit(300)));
+      n = snap.size;
+    } catch (e) { n = -1; }
+    counts.push({ name, label, n });
+    if (grid.querySelector('.empty')) grid.innerHTML = '';
+    grid.insertAdjacentHTML('beforeend', `
+      <button class="data-cell ${n > 0 ? 'has' : ''}" data-coll="${name}">
+        <div class="n">${n < 0 ? '!' : n}</div>
+        <div class="l">${esc(label)}</div>
+      </button>`);
+  }
+  grid.querySelectorAll('[data-coll]').forEach((cell) => {
+    cell.addEventListener('click', () => showCollection(u, cell.dataset.coll, cell.querySelector('.l').textContent));
+  });
+
+  async function showCollection(u2, coll, label) {
+    list.innerHTML = `<div class="empty">Loading ${esc(label)}...</div>`;
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'shops', u2._id, coll),
+        orderBy('updated_at', 'desc'), limit(10)));
+      if (!snap.size) { list.innerHTML = `<div class="empty">Empty.</div>`; return; }
+      list.innerHTML = `<div class="data-list-head">${esc(label)} - latest ${snap.size}</div>` +
+        snap.docs.map((d) => {
+          const v = d.data();
+          return `<div class="data-row"><pre>${esc(summarize(coll, v))}</pre></div>`;
+        }).join('');
+    } catch (e) {
+      list.innerHTML = `<div class="empty">Read failed: ${esc(e.code || '')}</div>`;
+    }
+  }
+}
+
+function summarize(coll, v) {
+  const money = (p) => '₹' + (Number(p || 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+  const dt = (ms) => { const d = toDate(ms); return d ? fmtDate(d) : '-'; };
+  switch (coll) {
+    case 'bills':
+      return `Bill #${v.bill_no} - ${v.customer_name || ''}
+${dt(v.bill_date)}  ${money(v.total_paise)}`
+        + (Array.isArray(v.items) ? `
+${v.items.length} items: `
+          + v.items.slice(0, 5).map((i) => i.product_name).join(', ') + (v.items.length > 5 ? '...' : '') : '');
+    case 'payments':
+      return `Payment - ${money(v.amount_paise)}
+${dt(v.pay_date)}  ${v.mode || 'cash'} ${v.note ? '- ' + v.note : ''}`;
+    case 'customers':
+      return `${v.name || ''} (${v.city || '-'})
+${v.phone || ''}  opening ${money(v.opening_balance_paise)}`;
+    case 'products':
+      return `${v.name || ''}
+rate ${money(v.default_price_paise)}  stock ${v.stock_qty ?? '-'} ${v.unit || ''}`;
+    case 'purchases':
+      return `Purchase #${v.purchase_no} - ${v.supplier_name || ''}
+${dt(v.purchase_date)}  ${money(v.amount_paise)}`
+        + (v.party_bill_no ? `  (party bill ${v.party_bill_no})` : '')
+        + (Array.isArray(v.items) ? `
+${v.items.length} items: `
+          + v.items.slice(0, 5).map((i) => i.product_name).join(', ') + (v.items.length > 5 ? '...' : '') : '');
+    case 'suppliers':
+      return `${v.name || ''} (${v.city || '-'})
+${v.phone || ''}  opening ${money(v.opening_balance_paise)}`;
+    case 'purchase_returns':
+      return `Return #${v.return_no} - ${v.supplier_name || ''}
+${dt(v.return_date)}  ${money((v.amount_paise || 0) + (v.gst_total_paise || 0))}`;
+    case 'sales_returns':
+      return `Sales return #${v.return_no} - ${v.customer_name || ''}
+${dt(v.return_date)}  ${money(v.amount_paise)}`;
+    default:
+      return JSON.stringify(v, null, 1).slice(0, 400);
+  }
+}
+
+function closeDataOverlay() {
+  if (dataOverlay) { dataOverlay.remove(); dataOverlay = null; }
 }
 
 // ---------------------------------------------------------------- login

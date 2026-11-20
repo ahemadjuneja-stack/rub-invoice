@@ -10,10 +10,10 @@ app and the **Ruby Key** admin PWA. UI, colours and layouts are
 | --- | --- |
 | Cross-account data access | `shops/{uid}/**` read+write requires `request.auth.uid == uid` - strict single-owner isolation, even the admin has no rule path into shop data. |
 | Blocked account keeps syncing | `canUseCloud()` denies ALL shop reads+writes when `users/{uid}.status == "blocked"`. |
-| Expired trial / subscription keeps syncing | `isExpired()` mirrors the app's `effectiveExpiry` (subscriptionEndDate ?? trialEndDate ?? legacy expiryDate) against `request.time`; expired accounts lose all cloud access server-side. |
+| Expired subscription keeps syncing | `isExpired()` mirrors the app's `effectiveExpiry` (subscriptionEndDate ?? legacy expiryDate; trialEndDate is ignored since v0.3.0) against `request.time`; expired accounts lose all cloud access server-side. |
 | Client edits protected fields | Owner update paths use strict `affectedKeys().hasOnly([...])` whitelists - `status`, `plan`, `maxDevices`, `trialEndDate`, `subscriptionEndDate`, `expiryDate`, `trialStartDate`, `role`, `email` are admin-only (whitelisted Gmail: `Ahemadjuneja@gmail.com`). |
 | 3rd device self-registers | Device list updates are append-or-remove only and capped: `registeredDevices.size() <= resource.data.maxDevices` enforced BY THE RULES, so a 3rd device's registration write is rejected server-side. |
-| Registration abuse | `users/{uid}` create requires the doc's `email` to match the signed-in Google identity, `plan == "trial"`, `maxDevices == 2`, `status in [pending, active]` (active only while `config/app.auto_approve`), no `role` field can be injected. |
+| Registration abuse | `users/{uid}` create requires the doc's `email` to match the signed-in Google identity, `plan in ["free", "trial"]` (trial kept for legacy app versions), `maxDevices == 2`, `status in [pending, active]` (active only while `config/app.auto_approve`), no `role` field can be injected. |
 | Paid-plan self-activation | `subscriptions/**` create/update/delete is admin-only. The Razorpay webhook (below) is the only automated writer. |
 
 Deploy: Firebase Console -> Firestore Database -> Rules -> paste

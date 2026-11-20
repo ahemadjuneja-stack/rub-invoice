@@ -284,3 +284,33 @@ input, select { font: inherit; }
 .rc-toggle input:checked + .box::after { transform: translateX(14px); background: #fff; }
 .rc-save { margin-top: 10px; width: 100%; height: 44px; font-weight: 800; }
 .rc-note { font-size: 11px; color: var(--faint); text-align: center; }
+
+/* ---------------- user data viewer (v0.3.0, read-only support) ------- */
+.data-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(6, 8, 14, 0.86);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 14px; overflow: auto;
+}
+.data-panel {
+  background: #14161d; border: 1px solid #2a2e3a; border-radius: 16px;
+  width: 100%; max-width: 560px; padding: 16px;
+}
+.data-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.data-title { font-weight: 800; font-size: 16px; color: #f3f5f9; }
+.data-sub { font-size: 11.5px; color: #8b93a6; margin-top: 2px; }
+.data-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+.data-cell {
+  background: #1a1d26; border: 1px solid #2a2e3a; border-radius: 12px;
+  padding: 10px 6px; cursor: pointer; text-align: center;
+}
+.data-cell .n { font-weight: 800; font-size: 16px; color: #647182; }
+.data-cell.has .n { color: #ff5a63; }
+.data-cell .l { font-size: 9.5px; color: #8b93a6; margin-top: 3px; line-height: 1.2; }
+.data-list { margin-top: 14px; }
+.data-list-head { font-size: 12px; font-weight: 800; color: #8b93a6; margin-bottom: 8px; }
+.data-row { background: #1a1d26; border: 1px solid #2a2e3a; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+.data-row pre {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: inherit; font-size: 12px; color: #d6dae4; line-height: 1.45;
+}

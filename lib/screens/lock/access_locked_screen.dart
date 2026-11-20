@@ -208,8 +208,8 @@ class AccessLockedScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Online payments (Razorpay) are coming soon - until then '
-            'renewal happens through the Admin.',
+            'Online payments are coming soon - until then renewal '
+            'happens through the Admin.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 10.5, height: 1.4, color: Ruby.faint),
           ),
