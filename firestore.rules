@@ -56,7 +56,7 @@ service cloud.firestore {
     // must be written as Firestore Timestamps (Ruby Key does) or epoch
     // milliseconds (legacy app rows). Anything else = treated as absent.
     function asMillis(v) {
-      return v is rules.Timestamp ? v.toMillis()
+      return v is timestamp ? v.toMillis()
            : (v is int ? v : 0);
     }
 
@@ -68,10 +68,10 @@ service cloud.firestore {
     //   subscriptionEndDate ?? (plan == "trial" ? trialEndDate : null)
     //                        ?? legacy expiryDate
     function isExpired(account) {
-      let sub = account.get('subscriptionEndDate');
+      let sub = account.get('subscriptionEndDate', null);
       let trial = account.get('plan', '') == 'trial'
-          ? account.get('trialEndDate') : null;
-      let legacy = account.get('expiryDate');
+          ? account.get('trialEndDate', null) : null;
+      let legacy = account.get('expiryDate', null);
       let end = sub != null ? sub
               : (trial != null ? trial : legacy);
       return end != null
