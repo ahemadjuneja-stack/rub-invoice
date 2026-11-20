@@ -67,6 +67,17 @@
 # references are safe to ignore for R8.
 -dontwarn com.google.android.play.core.**
 
+# ---- ML Kit text recognition (AI bill scan, v0.3.0) --------------------
+# google_mlkit_text_recognition's TextRecognizer.initialize() references
+# the Chinese / Devanagari / Japanese / Korean script recognizers, which
+# only exist when their sibling packages are bundled. This app uses the
+# LATIN recognizer only (on-device bill scan), so those classes are never
+# loaded - the references are safe to ignore for R8.
+-dontwarn com.google.mlkit.vision.text.chinese.**
+-dontwarn com.google.mlkit.vision.text.devanagari.**
+-dontwarn com.google.mlkit.vision.text.japanese.**
+-dontwarn com.google.mlkit.vision.text.korean.**
+
 # ---- generic safety nets ---------------------------------------------
 # Obfuscated stack traces: keep the mapping file (CI uploads it for
 # crash symbolication) and neutralize the original file names.
