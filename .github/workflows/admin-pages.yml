@@ -1,8 +1,8 @@
 name: Deploy Ruby Key (admin PWA)
 
 # Publishes ruby-key-admin/ to GitHub Pages on every push to main that
-# touches it. One-time repo setting: Settings -> Pages -> Source:
-# "GitHub Actions".
+# touches it. One-time repo setting (required, bot cannot do it):
+# Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
 
 on:
   push:
@@ -32,10 +32,6 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
-        with:
-          # One-time auto-enable of Pages for this repo, so the very
-          # first push publishes without a manual Settings step.
-          enablement: true
 
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
