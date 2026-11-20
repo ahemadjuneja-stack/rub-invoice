@@ -149,7 +149,7 @@ class AccessService {
       pinSalt: pinSalt,
     );
     await doc.set(info.toMap()
-      ..['createdAt'] = now.millisecondsSinceEpoch
+      ..['createdAt'] = DateTime.now().millisecondsSinceEpoch
       ..['updatedAt'] = FieldValue.serverTimestamp());
     await _cacheAccount(info);
     return info;
