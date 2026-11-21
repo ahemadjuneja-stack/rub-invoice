@@ -311,7 +311,7 @@ class PdfService {
 
     doc.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
-      marginAll: 34,
+      margin: const pw.EdgeInsets.all(34),
       footer: (ctx) => pw.Center(
         child: pw.Text(
           'Powered by Ruby Invoice  |  Page ${ctx.pageNumber} of ${ctx.pagesCount}',
@@ -484,7 +484,7 @@ class PdfService {
   /// Manual pw.Table so the money columns stay right-aligned; it splits
   /// across pages automatically inside MultiPage.
   pw.Widget _stmtTable(int fyOpening, List<_StmtRow> rows) {
-    pw.Text cell(String t,
+    pw.Widget cell(String t,
             {bool right = false, bool bold = false, double size = 8.5}) =>
         pw.Padding(
           padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 3),
@@ -1299,7 +1299,7 @@ class PdfService {
     String shopAddr,
     String shopPhone,
     String gstin,
-    String customerCity,
+    String partyTitle,
     String customerPhone,
     int balanceAfterPaise,
   ) {
