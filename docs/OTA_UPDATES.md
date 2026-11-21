@@ -6,17 +6,24 @@
 
 * every push / PR: analyze + release APK build, APK uploaded as a CI artifact
 * every `v*` tag: APK published to a **GitHub Release** automatically
+* every push to `main` where the `pubspec.yaml` version has no matching
+  `v*` tag yet: the tag + **GitHub Release + APK are published
+  automatically** (v0.4.3-fix). Before this, releases needed a manual
+  `git push origin v0.4.x` tag push - v0.4.1/0.4.2/0.4.3 were never
+  tagged, `releases/latest` stayed at v0.4.0, and installed apps had
+  nothing newer to update to.
 
-**Publish a new version:**
+**Publish a new version (one push, nothing else):**
 
 ```bash
 # 1. bump version in pubspec.yaml (e.g. 0.1.1+2)
 git add pubspec.yaml
 git commit -m "Bump version to 0.1.1"
-git tag v0.1.1
-git push origin main --tags
-# Actions builds the APK and attaches it to the v0.1.1 release
+git push origin main
+# Actions builds the APK, creates the v0.1.1 tag and attaches the
+# APK to the v0.1.1 release by itself - the in-app updater picks it up
 ```
+(Manual `git tag v0.1.1 && git push origin v0.1.1` still works the same.)
 
 **In-app updates (background download + one-tap install):** the app checks
 `api.github.com/repos/ahemadjuneja-stack/rub-invoice/releases/latest`

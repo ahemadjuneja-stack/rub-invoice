@@ -58,9 +58,10 @@ credentials.)
 
 * Pushing to `main` triggers **Android CI**: analyze + release APK.
   Download the APK from the run's **Artifacts** section.
-* To publish a release: `git tag v0.1.0 && git push origin v0.1.0` ->
-  the APK is attached to a GitHub Release automatically, and the app's
-  *Check Updates* button finds it.
+* Releases are automatic now (v0.4.3-fix): if the version in
+  `pubspec.yaml` has no matching `v*` tag yet, the CI run itself creates
+  the tag + GitHub Release + APK. A manual
+  `git tag v0.1.0 && git push origin v0.1.0` also still publishes.
 
 ## Verify the key works
 

@@ -10,6 +10,13 @@ on:
 permissions:
   contents: write
 
+# Serialize builds per ref: back-to-back pushes to main queue up instead
+# of racing each other into publishing the same release twice. Never
+# cancel an in-flight build - it may be the one that publishes.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -246,10 +253,41 @@ jobs:
           path: build/app/outputs/mapping/**/mapping.txt
           if-no-files-found: warn
 
-      - name: Publish GitHub Release (on v* tag)
-        if: startsWith(github.ref, 'refs/tags/')
+      # AUTO-RELEASE (v0.4.3-fix): until now a release was published ONLY
+      # on a MANUAL "git push origin v0.4.x" tag push. v0.4.1/0.4.2/0.4.3
+      # were never tagged, releases/latest stayed at v0.4.0, and installed
+      # apps never saw anything newer ("update nahi aa raha"). From now
+      # on the pubspec.yaml version IS the release: bump it, push to main,
+      # and when the matching v<version> tag does not exist yet this run
+      # creates the tag + Release + APK itself. No manual tagging, ever.
+      # Checked AFTER the build so a run that started earlier and is still
+      # publishing cannot be double-released (concurrency group queues us).
+      - name: Resolve auto-release (version tag missing?)
+        id: rel
+        if: github.ref == 'refs/heads/main'
+        run: |
+          VER="$(sed -nE 's/^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)\+.*/\1/p' pubspec.yaml)"
+          echo "pubspec version: $VER"
+          if [ -z "$VER" ]; then
+            echo "::error::Could not parse version from pubspec.yaml"
+            exit 1
+          fi
+          if git ls-remote --exit-code origin "refs/tags/v$VER" > /dev/null 2>&1; then
+            echo "Tag v$VER already exists - release already published, skipping."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag v$VER is missing - release will be published from this build."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "release_tag=v$VER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub Release (tag push, or auto on version bump)
+        if: >-
+          startsWith(github.ref, 'refs/tags/') ||
+          (github.ref == 'refs/heads/main' && steps.rel.outputs.should_release == 'true')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.rel.outputs.release_tag || github.ref_name }}
           files: build/app/outputs/flutter-apk/app-release.apk
           generate_release_notes: true
           fail_on_unmatched_files: true
