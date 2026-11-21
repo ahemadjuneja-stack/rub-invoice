@@ -149,3 +149,76 @@ R8 obfuscates the Java/Kotlin glue; every CI build archives
 artifact. Keep it for every release: Crashlytics uses it to de-obfuscate
 native stack traces. (Flutter Dart errors carry readable Dart symbols -
 no mapping needed there.)
+
+## Keystore off the repo (v0.4.1, setup guide)
+
+Until v0.4.0 the release signing key WAS committed
+(`android/app/ruby-invoice.keystore`, passwords inside
+`android/app/build.gradle.kts`). Anyone with repository access could
+sign an APK that Android would accept as a legitimate update for every
+existing install. v0.4.1 removes it:
+
+- `android/app/ruby-invoice.keystore` is untracked; `.gitignore`
+  covers `*.keystore`, `*.jks` and `android/key.properties`.
+- `android/app/build.gradle.kts` reads signing values from
+  `android/key.properties` (gitignored). If that file is missing the
+  release build falls back to the DEBUG key and prints a loud warning:
+  such an APK installs fresh but CANNOT update an existing signed
+  install - do not distribute it.
+- CI writes `key.properties` from the 4 GitHub Actions secrets and
+  decodes the keystore binary. While the secrets are not set yet, CI
+  restores the SAME key + values from the last historical commit that
+  contained them (interim fallback, emits a `::warning::`) so every
+  APK stays update-compatible.
+
+### One-time setup (the owner, 2 minutes)
+
+Local machine, repo root:
+
+```
+base64 -w0 android/app/ruby-invoice.keystore > /tmp/ks.b64
+cat android/app/build.gradle.kts | grep -E 'storePassword|keyPassword|keyAlias' || true
+```
+
+(The old passwords were `rubyinvoice` / alias `ruby_invoice` - they
+were public in old commits, which is exactly why the binary itself had
+to leave the repo.)
+
+GitHub -> this repo -> Settings -> Secrets and variables -> Actions ->
+New repository secret, four entries:
+
+| Secret name | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | full contents of `/tmp/ks.b64` (one long line) |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password (storePassword) |
+| `ANDROID_KEY_ALIAS` | the key alias |
+| `ANDROID_KEY_PASSWORD` | the key password (keyPassword) |
+
+(With the `gh` CLI:
+`gh secret set ANDROID_KEYSTORE_BASE64 < /tmp/ks.b64` etc.)
+Delete `/tmp/ks.b64` afterwards.
+
+### Rotating the key (recommended, scheduled)
+
+The old password values were public in git history, so the honest
+posture is: keep using the old key ONLY while it is required for
+update compatibility, and plan a rotation (new keystore + new
+certificate) for the moment you can coordinate a fresh install for
+every shop - rotation breaks the in-place upgrade path, so schedule it
+consciously.
+
+### Purging the history (optional, destructive)
+
+The keystore binary stays reachable in git history until rewritten:
+
+```
+pip install git-filter-repo
+git clone --mirror git@github.com:ahemadjuneja-stack/rub-invoice.git
+cd rub-invoice.git
+git filter-repo --path android/app/ruby-invoice.keystore --invert-paths
+git push --force --all && git push --force --tags
+```
+
+Set the 4 secrets FIRST (the interim fallback stops working after a
+history rewrite), coordinate every clone, and remember old clones keep
+the blob locally.

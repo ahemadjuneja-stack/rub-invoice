@@ -72,6 +72,28 @@ String billtyDaysLeft(BillDispatch d) {
   return 'photo keeps ${left == 1 ? '1 more day' : '$left more days'}';
 }
 
+/// v0.4.2 BILTY RETENTION WARNING: true when the SAVED photo is within
+/// 7 days of its 45-day auto-delete (or already past it). The bill view
+/// turns the days-left line amber and adds a "share it to keep a copy"
+/// advice so the shopkeeper exports the proof BEFORE it erases itself.
+bool billtyExpiringSoon(BillDispatch d) {
+  if (d.billtyPath.isEmpty || d.billtyAt <= 0) return false;
+  final used = DateTime.now()
+      .difference(DateTime.fromMillisecondsSinceEpoch(d.billtyAt))
+      .inDays;
+  return Repo.billtyRetentionDays - used <= 7;
+}
+
+/// Days left before the saved billty photo auto-deletes (0 = today).
+int billtyDaysLeftCount(BillDispatch d) {
+  if (d.billtyAt <= 0) return 0;
+  final used = DateTime.now()
+      .difference(DateTime.fromMillisecondsSinceEpoch(d.billtyAt))
+      .inDays;
+  final left = Repo.billtyRetentionDays - used;
+  return left > 0 ? left : 0;
+}
+
 /// Shares the delivery details as text (+ the billty photo when it is
 /// still on the phone) through the Android share sheet - WhatsApp is
 /// the first tap for the traders.

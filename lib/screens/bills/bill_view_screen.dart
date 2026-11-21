@@ -387,10 +387,26 @@ class _BillViewScreenState extends State<BillViewScreen> {
                               style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 1, color: Ruby.muted),
                             ),
                             const SizedBox(height: 2),
-                            Text(
-                              'Tap to view - ${billtyDaysLeft(d)}',
-                              style: const TextStyle(fontSize: 11.5, color: Ruby.faint),
-                            ),
+                            // v0.4.2 RETENTION WARNING: within 7 days of the
+                            // 45-day auto-delete the line turns amber and
+                            // tells the user to keep a copy - a deleted
+                            // transport proof cannot be argued with later.
+                            Builder(builder: (ctx) {
+                              final expiring = billtyExpiringSoon(d);
+                              final left = billtyDaysLeftCount(d);
+                              return Text(
+                                expiring
+                                    ? (left == 0
+                                        ? 'Deletes TODAY - share it to keep a copy'
+                                        : 'Deletes in $left ${left == 1 ? 'day' : 'days'} - share it to keep a copy')
+                                    : 'Tap to view - ${billtyDaysLeft(d)}',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: expiring ? FontWeight.w800 : FontWeight.w400,
+                                  color: expiring ? const Color(0xFFB45309) : Ruby.faint,
+                                ),
+                              );
+                            }),
                           ],
                         ),
                       ),

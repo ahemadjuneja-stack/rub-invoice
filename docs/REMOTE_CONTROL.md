@@ -173,3 +173,49 @@ No code needed for a LINK-style button:
 Anything outside these action formats is rejected by the app's action
 router whitelist (lib/services/action_router.dart) - a bad action is
 ignored, never executed.
+
+## Recipe: add a new button / section WITHOUT an update (v0.4.1)
+
+Example: every customer gets a "Today's Rate List" card on the Menu
+tab - today, from Ruby Key, no APK.
+
+1. Open **Ruby Key** -> **LIVE UI CONTROL** card.
+2. In the **Shortcuts** box add one line (format
+   `label | icon | color | action`):
+
+   ```
+   Today's Rate List | offer | #9B111E | url:https://example.com/rate-list
+   ```
+
+   - **icon** whitelist: bill, receipt, customer, customers, ledger,
+     inventory, purchase, purchases, return, returns, account,
+     accounts, report, reports, backup, sync, settings, whatsapp,
+     phone, call, offer, star, gift, link, share, shop - anything else
+     falls back to a link icon, never a crash.
+   - **action** whitelist (ActionRouter, case-insensitive prefix):
+     `open:billing|customers|ledger|inventory|purchases|returns|
+     accounts|backup|sync|settings|pdfformat`,
+     `url:https://...` (http/https only), `dial:+91...` (digits,
+     +, spaces, dashes), or `none` (announcement-only card).
+     Anything else is IGNORED safely - a typo can never crash or
+     misdirect the app.
+3. Save. Every phone applies it within seconds (live snapshot) and on
+   every cold start afterwards (the `live_ui_cache_v1` offline cache).
+4. To retire the button: delete the line (or toggle visibility) and
+   save. Nothing ships, nothing breaks.
+
+### Adding a brand-new action target IS an app change
+
+A screen that does not exist in the whitelist yet (say
+`open:ratelist` opening a NEW screen) ships like this:
+
+1. Build the screen in the app behind a live-ui feature flag (default
+   OFF - copy an existing flag in `LiveUiConfig`; the safe default
+   means phones without the new APK are unaffected).
+2. Add `'ratelist'` to `ActionRouter.screens` in
+   `lib/services/action_router.dart`, the navigation branch in
+   `home_screen.dart`, and extend the test in
+   `test/action_router_test.dart`.
+3. Ship the APK as usual. Only AFTER enough phones have the APK, add
+   the `open:ratelist` shortcut from Ruby Key - phones without the new
+   APK simply ignore the unknown action (IgnoredRoute, no crash).
