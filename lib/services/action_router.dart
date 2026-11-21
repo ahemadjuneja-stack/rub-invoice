@@ -51,17 +51,23 @@ class ActionRouter {
   };
 
   /// Parse an admin action string into a whitelisted route.
+  /// Case-insensitive on the scheme prefix (`OPEN:billing` works too);
+  /// the payload keeps its original case where it matters (URLs).
   static ShortcutRoute parse(String raw) {
     final action = raw.trim();
     if (action.isEmpty) return const IgnoredRoute();
+    // `lower` is only used for prefix DETECTION; the payload is always
+    // sliced from the ORIGINAL `action` at fixed indices (5/4/5), so a
+    // toLowerCase length change on exotic unicode can never corrupt it.
+    final lower = action.toLowerCase();
 
-    if (action.startsWith('open:')) {
+    if (lower.startsWith('open:')) {
       final screen = action.substring(5).trim().toLowerCase();
       if (screens.contains(screen)) return OpenScreenRoute(screen);
       return const IgnoredRoute();
     }
 
-    if (action.startsWith('url:')) {
+    if (lower.startsWith('url:')) {
       final url = action.substring(4).trim();
       final uri = Uri.tryParse(url);
       // Strict scheme + host check: `url:ftp://x`, `url:file:///...`,
@@ -75,7 +81,7 @@ class ActionRouter {
       return const IgnoredRoute();
     }
 
-    if (action.startsWith('dial:')) {
+    if (lower.startsWith('dial:')) {
       final tel = action.substring(5).trim();
       // Phone numbers only: digits, +, spaces, dashes, parentheses.
       // Blocks `dial:https://...` style abuse; the URI we launch is
