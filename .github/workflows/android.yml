@@ -67,16 +67,28 @@ jobs:
             echo "Signing with the keystore from GitHub Secrets."
           else
             echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set - using the interim history fallback (see docs/SECURITY.md)."
-            OLD_GRADLE_SHA=$(git log --format='%H %s' -- android/app/build.gradle.kts | grep -m1 'v0.4.0 CI fix' | cut -d' ' -f1)
-            git show "${OLD_GRADLE_SHA}:android/app/build.gradle.kts" | grep -oE '(storePassword|keyPassword|keyAlias) = "[^"]+"' | sed 's/.*= "\([^"]*\)"/\1/' > /tmp/sign_vals.txt
-            git show "${OLD_GRADLE_SHA}:android/app/ruby-invoice.keystore" > android/app/ruby-invoice.keystore
+            # Newest commit that still CONTAINED the keystore file:
+            # line 1 of `git log -- <path>` is the removal commit itself,
+            # line 2 is the last commit where the file existed (its tree
+            # has BOTH the keystore binary and the old signing config).
+            OLD_SHA=$(git log --format='%H' -- android/app/ruby-invoice.keystore | sed -n '2p')
+            if [ -z "$OLD_SHA" ]; then
+              echo "::error::No keystore in git history AND no ANDROID_* secrets set - cannot sign. Set the 4 secrets (docs/SECURITY.md)."
+              exit 1
+            fi
+            git show "$OLD_SHA:android/app/build.gradle.kts" | grep -oE '(storePassword|keyPassword|keyAlias) = "[^"]+"' | sed 's/.*= "\([^"]*\)"/\1/' > /tmp/sign_vals.txt
+            git show "$OLD_SHA:android/app/ruby-invoice.keystore" > android/app/ruby-invoice.keystore
+            if [ ! -s android/app/ruby-invoice.keystore ] || [ ! -s /tmp/sign_vals.txt ]; then
+              echo "::error::Keystore/value restore from $OLD_SHA came back empty."
+              exit 1
+            fi
             {
               echo "storeFile=ruby-invoice.keystore"
               echo "storePassword=$(sed -n 1p /tmp/sign_vals.txt)"
               echo "keyAlias=$(sed -n 2p /tmp/sign_vals.txt)"
               echo "keyPassword=$(sed -n 3p /tmp/sign_vals.txt)"
             } > android/key.properties
-            echo "Interim: keystore restored from git history ($OLD_GRADLE_SHA)."
+            echo "Interim: keystore restored from git history ($OLD_SHA)."
           fi
 
       - name: Analyze
