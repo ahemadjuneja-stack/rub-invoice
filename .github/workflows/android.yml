@@ -69,15 +69,31 @@ jobs:
           # EMPTY here while the web UI lists it, its stored NAME differs
           # from the expected one (invisible char from mobile autocorrect)
           # or its VALUE was saved empty -> delete + recreate that secret.
-          [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ] \
-            && echo "presence: ANDROID_KEYSTORE_BASE64 = SET ($(printf '%s' '${{ secrets.ANDROID_KEYSTORE_BASE64 }}' | wc -c | tr -d ' ') chars; full = 3740)" \
-            || echo "presence: ANDROID_KEYSTORE_BASE64 = EMPTY/MISSING  <-- recreate this secret"
-          [ -n "${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}" ] \
-            && echo "presence: ANDROID_OLD_KEYSTORE_BASE64 = SET ($(printf '%s' '${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}' | wc -c | tr -d ' ') chars; full = 3696)" \
-            || echo "presence: ANDROID_OLD_KEYSTORE_BASE64 = EMPTY/MISSING (optional)"
-          [ -n "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" ] && echo "presence: ANDROID_KEYSTORE_PASSWORD = SET" || echo "presence: ANDROID_KEYSTORE_PASSWORD = EMPTY/MISSING"
-          [ -n "${{ secrets.ANDROID_KEY_ALIAS }}" ] && echo "presence: ANDROID_KEY_ALIAS = SET" || echo "presence: ANDROID_KEY_ALIAS = EMPTY/MISSING"
-          [ -n "${{ secrets.ANDROID_KEY_PASSWORD }}" ] && echo "presence: ANDROID_KEY_PASSWORD = SET" || echo "presence: ANDROID_KEY_PASSWORD = EMPTY/MISSING"
+          PRESENCE=/tmp/presence.txt
+          {
+            if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then echo "presence: ANDROID_KEYSTORE_BASE64 = SET ($(printf '%s' '${{ secrets.ANDROID_KEYSTORE_BASE64 }}' | wc -c | tr -d ' ') chars; full = 3740)"; else echo "presence: ANDROID_KEYSTORE_BASE64 = EMPTY/MISSING"; fi
+            if [ -n "${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}" ]; then echo "presence: ANDROID_OLD_KEYSTORE_BASE64 = SET ($(printf '%s' '${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}' | wc -c | tr -d ' ') chars; full = 3696)"; else echo "presence: ANDROID_OLD_KEYSTORE_BASE64 = EMPTY/MISSING"; fi
+            if [ -n "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" ]; then echo "presence: ANDROID_KEYSTORE_PASSWORD = SET"; else echo "presence: ANDROID_KEYSTORE_PASSWORD = EMPTY/MISSING"; fi
+            if [ -n "${{ secrets.ANDROID_KEY_ALIAS }}" ]; then echo "presence: ANDROID_KEY_ALIAS = SET"; else echo "presence: ANDROID_KEY_ALIAS = EMPTY/MISSING"; fi
+            if [ -n "${{ secrets.ANDROID_KEY_PASSWORD }}" ]; then echo "presence: ANDROID_KEY_PASSWORD = SET"; else echo "presence: ANDROID_KEY_PASSWORD = EMPTY/MISSING"; fi
+          } | tee "$PRESENCE"
+          # Publish the presence report to the ci-logs branch so it is
+          # readable via raw.githubusercontent.com without any API auth.
+          (
+            mkdir -p /tmp/logrepo && cd /tmp/logrepo
+            git init -q
+            git config user.email "ci@rubyinvoice.local" && git config user.name "CI Bot"
+            git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+            {
+              echo "Secret presence report - run ${{ github.run_id }} attempt ${{ github.run_attempt }} - $(date -u '+%FT%TZ')"
+              echo "(char lengths only; secret values are never printed)"
+              cat "$PRESENCE"
+            } > secret-presence.txt
+            git add secret-presence.txt
+            git commit -qm "secret presence report for run ${{ github.run_id }}"
+            git branch -M ci-logs
+            git push -f origin ci-logs || true
+          ) || true
           if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
             echo "::error::ANDROID_KEYSTORE_BASE64 secret is NOT set (resolved to empty at runtime). The history fallback was removed in v0.4.3."
             echo "  CHECK 1: Settings -> Secrets and variables -> ACTIONS section (NOT Codespaces, NOT Dependabot), Secrets tab."
