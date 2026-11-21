@@ -6,6 +6,7 @@ import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../data/repo.dart';
+import '../../services/live_ui_service.dart';
 import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
@@ -130,6 +131,9 @@ class _BillViewScreenState extends State<BillViewScreen> {
   @override
   Widget build(BuildContext context) {
     final bill = _bill;
+    // v0.4.0 LIVE UI: Ruby Key can hide PDF sharing app-wide
+    // (app_config/live_ui -> enable_pdf_share) with no update.
+    final pdfShareOn = LiveUiService.instance.config.value.enablePdfShare;
     return Scaffold(
       appBar: RubyAppBar(
         title: bill == null ? 'Bill' : 'Bill #${bill.billNo}',
@@ -139,7 +143,10 @@ class _BillViewScreenState extends State<BillViewScreen> {
             icon: const Icon(Icons.edit_outlined),
             tooltip: 'Edit bill',
           ),
-          IconButton(onPressed: bill == null ? null : _share, icon: const Icon(Icons.share)),
+          if (pdfShareOn)
+            IconButton(
+                onPressed: bill == null ? null : _share,
+                icon: const Icon(Icons.share)),
           IconButton(onPressed: bill == null ? null : _delete, icon: const Icon(Icons.delete_outline)),
         ],
       ),
@@ -240,11 +247,13 @@ class _BillViewScreenState extends State<BillViewScreen> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.share, size: 20),
-            label: const Text('SHARE PDF BILL'),
-            onPressed: _share,
-          ),
+          child: pdfShareOn
+              ? ElevatedButton.icon(
+                  icon: const Icon(Icons.share, size: 20),
+                  label: const Text('SHARE PDF BILL'),
+                  onPressed: _share,
+                )
+              : const SizedBox.shrink(),
         ),
       ),
     );

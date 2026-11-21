@@ -201,6 +201,21 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ----------------------------------------------------------------
+    // app_config/live_ui (v0.4.0) - the LIVE UI ENGINE document. Ruby
+    // Key writes feature flags (maintenance_mode, enable_bilty_upload,
+    // enable_gst_fields, enable_razorpay_banner, enable_pdf_share),
+    // banner text/colours, the primary button colour/label and the
+    // dynamic home shortcuts. Phones apply every change within seconds
+    // - ZERO APK updates. Public read (no private data, same as
+    // config/{docId}); write admin-only, so no user can alter what
+    // every other phone renders.
+    // ----------------------------------------------------------------
+    match /app_config/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // Everything not matched above is denied by default.
   }
 }

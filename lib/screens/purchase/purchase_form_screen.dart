@@ -10,6 +10,7 @@ import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../../models/models.dart';
+import '../../services/live_ui_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 import 'supplier_picker_sheet.dart';
@@ -171,7 +172,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
     final gst =
         double.tryParse(_gstC.text.trim().replaceAll(',', '')) ?? 0;
     if (gst < 0 || gst > 100) {
-      showSnack(context, 'GST 0-100 ke beech hona chahiye');
+      showSnack(context, 'GST must be between 0 and 100');
       return;
     }
     setState(() {
@@ -612,9 +613,13 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
           _smallField(_qtyC, _qtyF, 'Qty', onSubmitted: () => _rateF.requestFocus()),
           const SizedBox(width: 5),
           _smallField(_rateC, _rateF, 'Rate', onSubmitted: _addLine),
-          const SizedBox(width: 5),
-          _smallField(_gstC, null, 'GST%',
-              onSubmitted: _addLine, width: 52),
+          // v0.4.0 LIVE UI: the per-line GST input appears only while
+          // Ruby Key keeps `enable_gst_fields` on (no update needed).
+          if (LiveUiService.instance.config.value.enableGstFields) ...[
+            const SizedBox(width: 5),
+            _smallField(_gstC, null, 'GST%',
+                onSubmitted: _addLine, width: 52),
+          ],
           const SizedBox(width: 4),
           IconButton(
             onPressed: _addLine,

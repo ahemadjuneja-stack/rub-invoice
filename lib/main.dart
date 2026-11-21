@@ -9,9 +9,11 @@ import 'package:flutter/services.dart';
 
 import 'app.dart';
 import 'core/app_log.dart';
+import 'core/error_boundary.dart';
 import 'data/db.dart';
 import 'data/repo.dart';
 import 'firebase_options.dart';
+import 'services/live_ui_service.dart';
 import 'services/remote_config.dart';
 import 'services/sync_service.dart';
 
@@ -31,6 +33,17 @@ Future<void> main() async {
   final bootWatch = Stopwatch()..start();
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  // v0.4.0 CRASH ISOLATION: global error handlers FIRST - from this
+  // line on, no build error or async exception can ever crash the
+  // whole app (release builds show a clean card; the crash lands in
+  // a small local diagnostics log instead of a dead app).
+  RubyErrorGuard.install();
+
+  // Zero-data-loss Layer 2.5: when Android parks the app in the
+  // background, flush pending local rows to the cloud right away so
+  // the OS killing the process can never lose unsaved bills.
+  AppLifecycleSyncHook.register();
 
   // Time LEFT in the 3-second boot budget (never negative).
   Duration left() {
@@ -101,6 +114,15 @@ Future<void> main() async {
     appLog('RemoteConfig init skipped (boot budget): $e');
   }
 
+  // v0.4.0 LIVE UI (app_config/live_ui): banners, feature flags and
+  // admin-defined shortcuts - Ruby Key changes reach phones WITHOUT
+  // an update. Cached in SharedPreferences first so it works offline.
+  try {
+    await LiveUiService.instance.init(fbReady: fbReady).timeout(left());
+  } catch (e) {
+    appLog('LiveUi init skipped (boot budget): $e');
+  }
+
   // FAILSAFE GUARANTEE: first frame - and therefore the end of the
   // native splash - is reached within the 3-second budget no matter
   // what happened above.
@@ -121,6 +143,7 @@ Future<void> _recoverFirebaseInBackground() async {
           const Settings(persistenceEnabled: true);
       await SyncService.instance.configure(fbReady: true);
       await RemoteConfigService.instance.init(fbReady: true);
+      await LiveUiService.instance.init(fbReady: true);
       unawaited(_activateAppCheck());
       appLog('Firebase recovered in background - login + sync live');
       return;
@@ -143,5 +166,29 @@ Future<void> _activateAppCheck() async {
     appLog('App Check activated (${kDebugMode ? 'debug' : 'playIntegrity'})');
   } catch (e) {
     appLog('App Check activation skipped: $e');
+  }
+}
+
+/// ZERO-DATA-LOSS Layer 2.5: flush the sync queue when the app goes
+/// to the background. Bills are saved to SQLite the millisecond the
+/// user hits Save (upload-on-save already fires a microtask); this
+/// hook closes the last window - the process being killed by Android
+/// before that microtask ran (rare, e.g. Save -> instant home press).
+class AppLifecycleSyncHook with WidgetsBindingObserver {
+  AppLifecycleSyncHook._();
+  static final AppLifecycleSyncHook instance = AppLifecycleSyncHook._();
+
+  static void register() {
+    WidgetsBinding.instance.addObserver(instance);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      // Fire-and-forget: even if this sync fails, the rows stay
+      // dirty=1 locally and the next open/connectivity tick pushes them.
+      unawaited(SyncService.instance.syncNow());
+    }
   }
 }

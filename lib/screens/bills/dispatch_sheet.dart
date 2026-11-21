@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../../models/models.dart';
+import '../../services/live_ui_service.dart';
 import '../../widgets/widgets.dart';
 
 /// Delivery (transport) details of a bill - the display that opens right
@@ -301,7 +302,10 @@ class _DispatchSheetState extends State<_DispatchSheet> {
               ),
               // Billty photo: only for transport - or whenever a photo
               // already exists so it can be viewed / removed.
-              if (_mode == 'transport' || _billtyPath.isNotEmpty) ...[
+              // v0.4.0 LIVE UI: Ruby Key can hide billty capture app-wide
+              // (app_config/live_ui -> enable_bilty_upload), no update.
+              if (LiveUiService.instance.config.value.enableBiltyUpload &&
+                  (_mode == 'transport' || _billtyPath.isNotEmpty)) ...[
                 const SizedBox(height: 14),
                 Container(
                   padding: const EdgeInsets.all(12),

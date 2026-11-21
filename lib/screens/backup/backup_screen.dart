@@ -46,6 +46,18 @@ class _BackupScreenState extends State<BackupScreen> {
     }
   }
 
+  Future<void> _exportCsv() async {
+    setState(() => _busy = true);
+    try {
+      await BackupService.instance.shareCsvExport();
+      await _loadLast();
+    } catch (e) {
+      if (mounted) showSnack(context, 'Export failed: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _restore() async {
     final path = await BackupService.instance.pickBackupFile();
     if (path == null) return;
@@ -88,6 +100,18 @@ class _BackupScreenState extends State<BackupScreen> {
             button: 'EXPORT & SHARE',
             onTap: _busy ? null : _export,
             accent: Ruby.ruby,
+          ),
+          const SizedBox(height: 14),
+          _card(
+            icon: Icons.table_view_outlined,
+            title: 'Export Excel (CSV) files',
+            subtitle:
+                'Opens your customers, bills, payments and purchases directly in Excel / '
+                'Google Sheets - one readable file per ledger. The JSON backup above stays '
+                'the complete restore file.',
+            button: 'EXPORT EXCEL FILES',
+            onTap: _busy ? null : _exportCsv,
+            accent: Ruby.green,
           ),
           const SizedBox(height: 14),
           _card(

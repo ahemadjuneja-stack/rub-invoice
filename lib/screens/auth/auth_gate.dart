@@ -5,12 +5,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/constants.dart';
 import '../../core/theme.dart';
 import '../../services/access_service.dart';
+import '../../services/live_ui_service.dart';
 import '../../services/pin_service.dart';
 import '../../services/sync_service.dart';
 import '../home/home_screen.dart';
 import '../lock/access_locked_screen.dart';
+import '../lock/maintenance_screen.dart';
 import '../lock/pending_approval_screen.dart';
 import 'login_screen.dart';
 import 'pin_lock_screen.dart';
@@ -80,6 +83,7 @@ class _AuthGateState extends State<AuthGate> {
     _access = AccessService.instance;
     _access.state.addListener(_onAccessChanged);
     SyncService.instance.fbReadyNotifier.addListener(_onFbReadyFlip);
+    LiveUiService.instance.config.addListener(_onLiveUiChanged);
     _bindFirebase();
     _load();
     // Strict 3-second maximum: SplashScreen.hide() / the first real
@@ -93,6 +97,7 @@ class _AuthGateState extends State<AuthGate> {
     _failsafe?.cancel();
     _access.state.removeListener(_onAccessChanged);
     SyncService.instance.fbReadyNotifier.removeListener(_onFbReadyFlip);
+    LiveUiService.instance.config.removeListener(_onLiveUiChanged);
     super.dispose();
   }
 
@@ -191,6 +196,13 @@ class _AuthGateState extends State<AuthGate> {
     if (mounted) setState(() {});
   }
 
+  /// v0.4.0 LIVE UI: the maintenance flag can flip while the app is
+  /// open (live snapshots listener) - rebuild so the gate appears or
+  /// disappears within seconds, no restart.
+  void _onLiveUiChanged() {
+    if (mounted) setState(() {});
+  }
+
   /// When access is allowed: make sure the Quick PIN exists locally.
   /// On a 2nd device the PIN is imported from the account record, so
   /// the same mobile number + PIN unlocks both phones.
@@ -249,8 +261,25 @@ class _AuthGateState extends State<AuthGate> {
         if (_hasPin && !_unlocked) {
           return PinLockScreen(onUnlocked: () => setState(() => _unlocked = true));
         }
+        // v0.4.0 LIVE UI: Ruby Key can put the app in maintenance mode
+        // remotely (app_config/live_ui -> maintenance_mode). The owner's
+        // admin Gmail always passes; everyone else sees the gate.
+        final live = LiveUiService.instance.config.value;
+        if (live.maintenanceMode && !_isAdminGmail) {
+          return MaintenanceScreen(
+            onBypass: () => setState(() {}),
+          );
+        }
         return const HomeScreen();
     }
+  }
+
+  /// The owner's own Gmail keeps full access even in maintenance mode
+  /// (same address that opens Ruby Key). Compared case-insensitively.
+  bool get _isAdminGmail {
+    final email = _fb?.currentUser?.email?.trim().toLowerCase() ?? '';
+    return email.isNotEmpty &&
+        email == AppConstants.adminEmail.toLowerCase();
   }
 
   Widget _splash({bool restoring = false}) {

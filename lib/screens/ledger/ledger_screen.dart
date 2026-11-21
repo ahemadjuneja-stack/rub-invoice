@@ -11,6 +11,7 @@ import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../models/settlement.dart';
 import '../../data/repo.dart';
+import '../../services/live_ui_service.dart';
 import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
 import '../billing/billing_screen.dart';
@@ -355,11 +356,14 @@ class _LedgerScreenState extends State<LedgerScreen> {
       appBar: RubyAppBar(
         title: widget.customerName,
         actions: [
-          IconButton(
-            onPressed: _loading ? null : _shareStatement,
-            icon: const Icon(Icons.picture_as_pdf_outlined),
-            tooltip: 'Share statement (full year)',
-          ),
+          // v0.4.0 LIVE UI: hidden app-wide when Ruby Key turns
+          // `enable_pdf_share` off (no update needed).
+          if (LiveUiService.instance.config.value.enablePdfShare)
+            IconButton(
+              onPressed: _loading ? null : _shareStatement,
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              tooltip: 'Share statement (full year)',
+            ),
           IconButton(onPressed: _editCustomer, icon: const Icon(Icons.edit_outlined)),
         ],
       ),

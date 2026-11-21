@@ -35,10 +35,13 @@ let adminUser = null;    // signed-in Google account
 let adminOk = false;     // passed the whitelist
 let unsubUsers = null;   // Firestore listener
 let unsubConfig = null;  // config/app remote-control listener
+let unsubLiveUi = null;  // app_config/live_ui live-UI listener (v0.4.0)
 let searchTerm = '';
 let openIds = new Set(); // expanded user cards
 let remoteCfg = {};      // live config/app values
 let cfgDirty = false;    // admin typed something not saved yet
+let liveUiCfg = {};      // live app_config/live_ui values (v0.4.0)
+let liveUiDirty = false; // admin typed something in Live UI not saved yet
 
 // ---------------------------------------------------------------- utils
 const esc = (s) => String(s ?? '')
@@ -170,6 +173,41 @@ function renderDashboard() {
           <div class="rc-note" id="rcNote">Live - no APK needed.</div>
         </div>
       </section>
+      <section class="rc-card">
+        <div class="rc-head" id="luHead">
+          <div class="rc-title">LIVE UI CONTROL <span class="rc-dot"></span></div>
+          <div class="rc-sub">v0.4.0 - banners, feature switches, button colour and custom menu cards, straight to every phone. No APK, no update.</div>
+        </div>
+        <div class="rc-body hidden" id="luBody">
+          <div class="rc-toggles">
+            <label class="rc-toggle"><input type="checkbox" id="luBilty" /><span class="box"></span>Billty photo upload</label>
+            <label class="rc-toggle"><input type="checkbox" id="luGst" /><span class="box"></span>GST fields (purchase)</label>
+            <label class="rc-toggle"><input type="checkbox" id="luPdf" /><span class="box"></span>PDF share buttons</label>
+            <label class="rc-toggle"><input type="checkbox" id="luRzp" /><span class="box"></span>Online payments offer banner</label>
+            <label class="rc-toggle danger"><input type="checkbox" id="luMaint" /><span class="box"></span>MAINTENANCE MODE (locks every phone)</label>
+          </div>
+          <label class="rc-label">Offer banner text + colours (banner off = hidden)</label>
+          <textarea id="luBannerText" rows="2" placeholder="e.g. Diwali special - free delivery this week!"></textarea>
+          <div style="display:flex; gap:8px">
+            <input id="luBannerBg" type="color" style="width:48px;height:36px;padding:2px" title="Banner background colour" />
+            <input id="luBannerFg" type="color" style="width:48px;height:36px;padding:2px" title="Banner text colour" />
+            <span class="small" style="align-self:center;font-size:11px">Banner background &amp; text colour</span>
+          </div>
+          <label class="rc-label">Primary button - colour + label (label empty = classic + icon)</label>
+          <div style="display:flex; gap:8px">
+            <input id="luPrimaryColor" type="color" style="width:48px;height:36px;padding:2px" title="Primary button colour" />
+            <input id="luPrimaryLabel" type="text" style="flex:1" placeholder="e.g. NEW BILL (empty = + icon button)" />
+          </div>
+          <label class="rc-label">Custom menu cards - ONE per line: <b>Label | icon | colour | action</b></label>
+          <textarea id="luShortcuts" rows="4" placeholder="Offers | gift | #e91e63 | url:https://example.com\nSupport call | call | #0A3D62 | dial:9876543210\nNew Bill | bill | #9B111E | open:billing"></textarea>
+          <div class="small" style="font-size:10.5px;line-height:1.5;margin-top:4px">
+            icons: bill, receipt, customer, ledger, inventory, purchase, return, account, report, backup, sync, settings, whatsapp, call, offer, star, gift, link, share, shop
+            &nbsp;&bull;&nbsp; actions: open:billing, open:customers, open:ledger, open:inventory, open:purchases, open:returns, open:accounts, open:backup, open:sync, open:settings, open:pdfformat, url:https://..., dial:number, none
+          </div>
+          <button class="btn primary rc-save" id="luSave">Save &amp; Apply to All Phones</button>
+          <div class="rc-note" id="luNote">Live UI - applies within seconds, no APK needed.</div>
+        </div>
+      </section>
       <section class="stats" id="stats"></section>
       <div class="search">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#647182" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
@@ -181,6 +219,7 @@ function renderDashboard() {
   document.getElementById('outBtn').onclick = async () => {
     if (unsubUsers) { unsubUsers(); unsubUsers = null; }
     if (unsubConfig) { unsubConfig(); unsubConfig = null; }
+    if (unsubLiveUi) { unsubLiveUi(); unsubLiveUi = null; }
     await signOut(auth);
   };
   const s = document.getElementById('search');
@@ -188,6 +227,7 @@ function renderDashboard() {
   paintStats();
   paintUsers();
   bindRemoteControl();
+  bindLiveUiControl();
 }
 
 // ---------------------------------------------- remote control (config/app)
@@ -266,6 +306,122 @@ function listenConfig() {
   unsubConfig = onSnapshot(doc(db, 'config', 'app'), (snap) => {
     remoteCfg = snap.data() || {};
     fillRemoteForm();
+  }, () => {
+    // read blocked / offline - the form still works, save may fail
+  });
+}
+
+// --------------------------------------------- live UI control (v0.4.0)
+// app_config/live_ui - banners, feature flags, primary button and
+// admin-defined menu cards. Phones listen live; nothing to install.
+const LIVE_UI_DEFAULT_SHORTCUTS = '';
+
+function bindLiveUiControl() {
+  const head = document.getElementById('luHead');
+  const body = document.getElementById('luBody');
+  if (!head || !body) return;
+  head.addEventListener('click', () => body.classList.toggle('hidden'));
+  document.getElementById('luSave').addEventListener('click', saveLiveUi);
+  ['luBilty', 'luGst', 'luPdf', 'luRzp', 'luMaint',
+   'luBannerText', 'luBannerBg', 'luBannerFg',
+   'luPrimaryColor', 'luPrimaryLabel', 'luShortcuts'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => { liveUiDirty = true; });
+  });
+}
+
+function fillLiveUiForm() {
+  if (liveUiDirty) return; // never overwrite unsaved admin edits
+  const g = (id) => document.getElementById(id);
+  if (!g('luBilty')) return;
+  const f = liveUiCfg || {};
+  // flags default ON (except maintenance + offer banner: default OFF)
+  g('luBilty').checked = f.enable_bilty_upload !== false;
+  g('luGst').checked = f.enable_gst_fields !== false;
+  g('luPdf').checked = f.enable_pdf_share !== false;
+  g('luRzp').checked = f.enable_razorpay_banner === true;
+  g('luMaint').checked = f.maintenance_mode === true;
+  const b = f.banner || {};
+  g('luBannerText').value = b.text || '';
+  g('luBannerBg').value = normHex(b.bg, '#9B111E');
+  g('luBannerFg').value = normHex(b.fg, '#FFFFFF');
+  g('luPrimaryColor').value = normHex(f.primary_color, '#9B111E');
+  g('luPrimaryLabel').value = f.primary_label || '';
+  const lines = (f.shortcuts || [])
+    .map((s) => [s.label || '', s.icon || '', s.color || '', s.action || 'none'].join(' | '))
+    .join('\n');
+  g('luShortcuts').value = lines || LIVE_UI_DEFAULT_SHORTCUTS;
+  const note = g('luNote');
+  if (note) {
+    note.textContent = Object.keys(f).length
+      ? 'Live UI - last saved values loaded. Every phone applies changes within seconds.'
+      : 'Not configured yet - saving creates app_config/live_ui automatically.';
+  }
+}
+
+// "#a1b2c3" / "a1b2c3" -> "#A1B2C3"; anything else -> fallback.
+function normHex(v, fallback) {
+  let s = String(v || '').trim().replace(/^#/, '').toUpperCase();
+  if (/^[0-9A-F]{6}$/.test(s)) return '#' + s;
+  return fallback;
+}
+
+async function saveLiveUi() {
+  const g = (id) => document.getElementById(id);
+  const bannerText = String(g('luBannerText').value || '').trim();
+  const maint = g('luMaint').checked;
+  if (maint && !confirm(
+    'MAINTENANCE MODE will show a maintenance screen on EVERY phone (except your admin Gmail).\n'
+    + 'Customers cannot use the app until you turn this off. Continue?')) {
+    return;
+  }
+  const shortcuts = [];
+  const lines = String(g('luShortcuts').value || '').split('\n');
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) continue;
+    const [label, icon, color, action] = t.split('|').map((p) => p.trim());
+    if (!label) continue;
+    shortcuts.push({
+      id: 'sc_' + Math.random().toString(36).slice(2, 9),
+      label,
+      icon: icon || 'link',
+      color: normHex(color, ''),
+      action: action || 'none',
+      visible: true,
+    });
+  }
+  if (!confirm('Apply this UI to EVERY installed phone right now?')) return;
+  try {
+    await setDoc(doc(db, 'app_config', 'live_ui'), {
+      maintenance_mode: maint,
+      enable_bilty_upload: g('luBilty').checked,
+      enable_gst_fields: g('luGst').checked,
+      enable_razorpay_banner: g('luRzp').checked,
+      enable_pdf_share: g('luPdf').checked,
+      banner: {
+        enabled: bannerText.length > 0,
+        text: bannerText,
+        bg: normHex(g('luBannerBg').value, '#9B111E'),
+        fg: normHex(g('luBannerFg').value, '#FFFFFF'),
+      },
+      primary_color: normHex(g('luPrimaryColor').value, '#9B111E'),
+      primary_label: String(g('luPrimaryLabel').value || '').trim(),
+      shortcuts,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    liveUiDirty = false;
+    toast('Live UI applied - every phone updates in seconds');
+  } catch (e) {
+    toast('Failed: ' + (e.code || ''), true);
+  }
+}
+
+function listenLiveUi() {
+  if (unsubLiveUi) unsubLiveUi();
+  unsubLiveUi = onSnapshot(doc(db, 'app_config', 'live_ui'), (snap) => {
+    liveUiCfg = snap.data() || {};
+    fillLiveUiForm();
   }, () => {
     // read blocked / offline - the form still works, save may fail
   });
@@ -603,6 +759,7 @@ onAuthStateChanged(auth, (user) => {
     adminUser = null; adminOk = false;
     if (unsubUsers) { unsubUsers(); unsubUsers = null; }
     if (unsubConfig) { unsubConfig(); unsubConfig = null; }
+    if (unsubLiveUi) { unsubLiveUi(); unsubLiveUi = null; }
     renderLogin();
     return;
   }
@@ -617,6 +774,7 @@ onAuthStateChanged(auth, (user) => {
   renderDashboard();
   listenUsers();
   listenConfig();
+  listenLiveUi();
 });
 
 function listenUsers() {

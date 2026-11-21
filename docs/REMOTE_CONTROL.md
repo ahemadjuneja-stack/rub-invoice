@@ -90,3 +90,33 @@ API is rate-limited (60 req/hour per IP), and every request has a
 12-second timeout. If the system installer cannot open (missing
 "Install unknown apps" permission - it resets after Clear Data), the
 popup shows a one-permission guide plus a "Download in browser" escape.
+
+## v0.4.0: LIVE UI CONTROL (`app_config/live_ui`)
+
+The Ruby Key panel's **LIVE UI CONTROL** card writes the Firestore
+document `app_config/live_ui`. Every installed phone listens to it
+live (Firebase snapshots) and applies changes within seconds - no
+APK, no Play Store, no update. The last-known document is cached in
+SharedPreferences (`live_ui_cache_v1`) so offline starts keep the
+same UI, and every field has a safe default.
+
+| Field | Type | Default | Effect on the app |
+|---|---|---|---|
+| `maintenance_mode` | bool | false | Full-screen maintenance gate; the admin Gmail always passes. |
+| `enable_bilty_upload` | bool | true | Billty (lorry receipt) photo capture on the delivery sheet. |
+| `enable_gst_fields` | bool | true | Per-line GST inputs on purchase + purchase-return forms. |
+| `enable_razorpay_banner` | bool | false | Online-payments offer banner on the home Billing tab (user can dismiss for the day). |
+| `enable_pdf_share` | bool | true | Share-PDF buttons (bill view + ledger statement). |
+| `banner.enabled/text/bg/fg` | map | off | Announcement banner at the top of the Billing tab, hex colours. |
+| `primary_color` | string | - | Hex colour of the home + button (empty = theme red). |
+| `primary_label` | string | '' | Label of the home button (empty = classic + icon FAB). |
+| `shortcuts` | list | [] | Admin-defined menu cards: `{id,label,icon,color,action,visible}`. |
+
+Shortcut `action` formats: `open:billing|customers|ledger|inventory|
+purchases|returns|accounts|backup|sync|settings|pdfformat`,
+`url:https://...`, `dial:number`, `none`.
+
+Rules: `match /app_config/{docId}` - public read (no private data),
+admin write only (same trust level as `config/{docId}`). A malformed
+row, unknown icon or broken link can never break the app - the parser
+skips bad rows and unknown actions fall back safely.

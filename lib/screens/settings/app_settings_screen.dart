@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/error_boundary.dart';
 import '../../core/theme.dart';
 import '../../services/package_info_helper.dart';
 import '../../services/update_service.dart';
@@ -177,8 +178,71 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
                 onTap: _about,
               ),
+              const Divider(height: 1, indent: 16, endIndent: 16),
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.bug_report_outlined, color: Ruby.ruby, size: 20),
+                title: const Text('App Diagnostics',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Ruby.ink)),
+                subtitle: const Text('Recent technical errors (for support)',
+                    style: TextStyle(fontSize: 12, color: Ruby.muted)),
+                trailing: const Icon(Icons.chevron_right, size: 18, color: Ruby.faint),
+                onTap: _showDiagnostics,
+              ),
             ],
           )),
+        ],
+      ),
+    );
+  }
+
+  // ---------------- diagnostics (v0.4.0 crash log) ----------------
+
+  Future<void> _showDiagnostics() async {
+    final log = await RubyErrorGuard.crashLog();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('App Diagnostics',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: log.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 18),
+                  child: Text(
+                    'No technical issues recorded.\nThe app is running clean.',
+                    style: TextStyle(fontSize: 13, height: 1.5, color: Ruby.muted),
+                  ),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: log.length,
+                  itemBuilder: (ctx, i) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Text(
+                      log[i],
+                      style: const TextStyle(
+                          fontSize: 11, height: 1.35, color: Ruby.muted),
+                    ),
+                  ),
+                ),
+        ),
+        actions: [
+          if (log.isNotEmpty)
+            TextButton(
+              onPressed: () async {
+                await RubyErrorGuard.clearCrashLog();
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('Clear'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
         ],
       ),
     );

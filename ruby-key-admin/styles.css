@@ -282,6 +282,10 @@ input, select { font: inherit; }
 }
 .rc-toggle input:checked + .box { background: var(--green); }
 .rc-toggle input:checked + .box::after { transform: translateX(14px); background: #fff; }
+/* v0.4.0 Live UI: the maintenance-mode toggle reads as danger. */
+.rc-toggle.danger { color: #ff8a8f; font-weight: 700; }
+.rc-toggle.danger input:checked + .box { background: var(--ruby); }
+.rc-body input[type="color"] { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); cursor: pointer; }
 .rc-save { margin-top: 10px; width: 100%; height: 44px; font-weight: 800; }
 .rc-note { font-size: 11px; color: var(--faint); text-align: center; }
 

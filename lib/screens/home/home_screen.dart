@@ -7,14 +7,17 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
+import '../../core/error_boundary.dart';
 import '../../models/models.dart';
 import '../../data/repo.dart';
 import '../../services/bill_draft_service.dart';
+import '../../services/live_ui_service.dart';
 import '../../services/package_info_helper.dart';
 import '../../services/remote_config.dart';
 import '../../services/sync_service.dart';
 import '../../services/update_service.dart';
 import '../accounts/accounts_screen.dart';
+import '../backup/backup_screen.dart';
 import '../bills/bill_view_screen.dart';
 import '../billing/billing_screen.dart';
 import '../../widgets/widgets.dart';
@@ -25,6 +28,7 @@ import '../purchase/purchase_screen.dart';
 
 import '../settings/app_settings_screen.dart';
 import '../settings/settings_screen.dart';
+import '../sync/sync_status_screen.dart';
 
 /// Home: Billing tab (today + yesterday bills) and Menu tab.
 class HomeScreen extends StatefulWidget {
@@ -71,6 +75,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     RemoteConfigService.instance.config.addListener(_onRemoteConfig);
+    LiveUiService.instance.config.addListener(_onLiveUi);
+    _loadRazorpayDismissKey();
     _reload();
     unawaited(_autoUpdateCheck());
     unawaited(_restorePendingUpdate());
@@ -88,6 +94,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _updateTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     RemoteConfigService.instance.config.removeListener(_onRemoteConfig);
+    LiveUiService.instance.config.removeListener(_onLiveUi);
     super.dispose();
   }
 
@@ -396,6 +403,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _onRemoteConfig() => unawaited(_gateIfNeeded());
 
+  /// v0.4.0 LIVE UI: rebuild the whole Scaffold (banner, FAB colour,
+  /// shortcuts) the moment Ruby Key pushes a new app_config/live_ui.
+  void _onLiveUi() => setState(() {});
+
   /// Force-update gate driven by remote config `min_version`.
   Future<void> _gateIfNeeded() async {
     final min = RemoteConfigService.instance.config.value.minVersion;
@@ -649,14 +660,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       body: ValueListenableBuilder<RemoteConfig>(
         valueListenable: RemoteConfigService.instance.config,
-        builder: (context, rc, _) => _tab == 0 ? _billingTab(rc) : _menuTab(rc),
+        builder: (context, rc, _) => ValueListenableBuilder<LiveUiConfig>(
+          valueListenable: LiveUiService.instance.config,
+          builder: (context, live, _) => ErrorBoundary(
+            module: 'Home screen',
+            builder: (ctx) =>
+                _tab == 0 ? _billingTab(rc, live) : _menuTab(rc, live),
+          ),
+        ),
       ),
       floatingActionButton: _tab == 0
-          ? FloatingActionButton(
-              heroTag: 'home_fab',
-              onPressed: _openNewBill,
-              child: const Icon(Icons.add, size: 30),
-            )
+          ? _liveFab()
           : null,
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _tab,
@@ -669,9 +683,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// v0.4.0 LIVE UI: the primary action button follows the admin -
+  /// colour (hex) and even the label come from app_config/live_ui, so
+  /// Ruby Key can restyle it with no update. Empty label = the classic
+  /// + icon button; a label turns it into an extended FAB.
+  Widget _liveFab() {
+    final live = LiveUiService.instance.config.value;
+    final color = live.primaryColor ?? Ruby.ruby;
+    final label = live.primaryLabel.trim();
+    if (label.isEmpty) {
+      return FloatingActionButton(
+        heroTag: 'home_fab',
+        onPressed: _openNewBill,
+        backgroundColor: color,
+        child: const Icon(Icons.add, size: 30),
+      );
+    }
+    return FloatingActionButton.extended(
+      heroTag: 'home_fab',
+      onPressed: _openNewBill,
+      backgroundColor: color,
+      icon: const Icon(Icons.add, size: 24),
+      label: Text(
+        label,
+        style: const TextStyle(
+            fontWeight: FontWeight.w800, letterSpacing: 0.3),
+      ),
+    );
+  }
+
   // ---------------- Billing tab ----------------
 
-  Widget _billingTab(RemoteConfig rc) {
+  Widget _billingTab(RemoteConfig rc, LiveUiConfig live) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator(color: Ruby.ruby));
     }
@@ -684,7 +727,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
+          _liveBanner(live),
           _noticeBanner(rc),
+          _razorpayBanner(live),
           _updateBanner(),
           if (_loadError != null) _loadErrorBanner(),
           if (_draft != null) _draftBanner(_draft!),
@@ -705,6 +750,102 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+
+  /// v0.4.0 LIVE UI: admin-controlled announcement banner (text,
+  /// background and text colour are all hex-editable from Ruby Key).
+  /// Sits ABOVE the classic config/app notice banner.
+  Widget _liveBanner(LiveUiConfig live) {
+    if (!live.bannerEnabled || live.bannerText.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: live.bannerBg ?? Ruby.ruby,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.campaign_outlined, color: Colors.white, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              live.bannerText.trim(),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: live.bannerFg ?? Colors.white,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// v0.4.0 LIVE UI: the online-payments offer banner appears ONLY
+  /// while the admin keeps `enable_razorpay_banner` on in Ruby Key -
+  /// remove the flag and every phone loses it within seconds.
+  Widget _razorpayBanner(LiveUiConfig live) {
+    if (!live.enableRazorpayBanner || _razorpayDismissedToday) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A3D62),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.currency_rupee, color: Colors.white, size: 20),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Online payments (UPI / Card) - coming soon to Ruby Invoice',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+                height: 1.35,
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: _dismissRazorpayBanner,
+            child: const Icon(Icons.close, color: Colors.white70, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// X on the offer banner hides it for today (SP flag per day key) -
+  /// reappears tomorrow unless the admin turns the flag off.
+  Future<void> _dismissRazorpayBanner() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString('razorpay_banner_dismissed', Dt.todayKey());
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  bool get _razorpayDismissedToday => _razorpayDismissedKey == Dt.todayKey();
+
+  /// Dismissed-today flag is loaded with the session (initState +
+  /// every resume) and updated when the user taps the X.
+  String _razorpayDismissedKey = '';
+
+  Future<void> _loadRazorpayDismissKey() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      _razorpayDismissedKey = sp.getString('razorpay_banner_dismissed') ?? '';
+      if (mounted) setState(() {});
+    } catch (_) {}
   }
 
   /// v0.2.19: visible failure state with a retry - a broken load can
@@ -919,10 +1060,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // ---------------- Menu tab ----------------
 
-  Widget _menuTab(RemoteConfig rc) {
+  Widget _menuTab(RemoteConfig rc, LiveUiConfig live) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (live.shortcuts.isNotEmpty) ...[
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.5,
+            children: [
+              for (final s in live.shortcuts)
+                _menuCard(
+                  _shortcutIcon(s.icon),
+                  s.label,
+                  () => _runShortcut(s),
+                  iconColor: s.color,
+                ),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(4, 14, 4, 0),
+            child: Text(
+              'Quick links',
+              style: TextStyle(fontSize: 11.5, color: Ruby.faint),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
         GridView.count(
           crossAxisCount: 2,
           shrinkWrap: true,
@@ -981,7 +1149,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _menuCard(IconData icon, String title, VoidCallback onTap,
-      {String? badge}) {
+      {String? badge, Color? iconColor}) {
     return Card(
       color: Colors.white,
       elevation: 2,
@@ -996,7 +1164,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 34, color: Ruby.ruby),
+            Icon(icon, size: 34, color: iconColor ?? Ruby.ruby),
             const SizedBox(height: 10),
             Text(
               title,
@@ -1025,5 +1193,113 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  // ---------------- LIVE UI dynamic shortcuts (v0.4.0) ----------------
+
+  /// Admin icon names -> Material icons. Unknown names fall back to a
+  /// link icon, so a typo in Ruby Key can never break the home screen.
+  IconData _shortcutIcon(String name) {
+    final map = <String, IconData>{
+      'bill': Icons.receipt_long_outlined,
+      'receipt': Icons.receipt_outlined,
+      'customer': Icons.people_alt_outlined,
+      'customers': Icons.people_outline,
+      'ledger': Icons.book_outlined,
+      'inventory': Icons.inventory_2_outlined,
+      'purchase': Icons.local_shipping_outlined,
+      'purchases': Icons.local_shipping_outlined,
+      'return': Icons.keyboard_return,
+      'returns': Icons.keyboard_return,
+      'account': Icons.account_balance_wallet_outlined,
+      'accounts': Icons.account_balance_wallet_outlined,
+      'report': Icons.pie_chart_outline,
+      'reports': Icons.pie_chart_outline,
+      'backup': Icons.backup_outlined,
+      'sync': Icons.sync_outlined,
+      'settings': Icons.settings_outlined,
+      'whatsapp': Icons.chat_outlined,
+      'phone': Icons.phone_outlined,
+      'call': Icons.call_outlined,
+      'offer': Icons.local_offer_outlined,
+      'star': Icons.star_border_outlined,
+      'gift': Icons.card_giftcard_outlined,
+      'link': Icons.link_outlined,
+      'share': Icons.share_outlined,
+      'shop': Icons.storefront_outlined,
+    };
+    return map[name.trim().toLowerCase()] ?? Icons.link_outlined;
+  }
+
+  /// Admin-defined actions. Formats:
+  ///   open:billing | open:customers | open:ledger | open:inventory
+  ///   open:purchases | open:returns | open:accounts | open:backup
+  ///   open:sync | open:settings | open:pdfformat
+  ///   url:https://...   (browser / WhatsApp link)
+  ///   dial:+919876543210
+  ///   none              (announcement-only card)
+  Future<void> _runShortcut(LiveShortcut s) async {
+    final action = s.action.trim();
+    try {
+      if (action.startsWith('open:')) {
+        switch (action.substring(5).trim().toLowerCase()) {
+          case 'billing':
+            setState(() => _tab = 0);
+            return;
+          case 'customers':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)));
+            return;
+          case 'ledger':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)));
+            return;
+          case 'inventory':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const InventoryScreen()));
+            return;
+          case 'purchases':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseScreen()));
+            return;
+          case 'returns':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesReturnScreen()));
+            return;
+          case 'accounts':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()));
+            return;
+          case 'backup':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()));
+            return;
+          case 'sync':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const SyncStatusScreen()));
+            return;
+          case 'settings':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const AppSettingsScreen()));
+            return;
+          case 'pdfformat':
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+            return;
+        }
+        return;
+      }
+      if (action.startsWith('url:')) {
+        final url = action.substring(4).trim();
+        if (url.startsWith('http')) {
+          await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        }
+        return;
+      }
+      if (action.startsWith('dial:')) {
+        final tel = action.substring(5).trim();
+        if (tel.isNotEmpty) {
+          await launchUrl(Uri(scheme: 'tel', path: tel));
+        }
+        return;
+      }
+    } catch (e) {
+      // A broken admin link shows a snack, never a crash.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('This shortcut could not open: ${s.label}')),
+        );
+      }
+    }
   }
 }

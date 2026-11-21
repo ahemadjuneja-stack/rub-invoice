@@ -5,6 +5,7 @@ import '../../core/formatters.dart';
 import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../../models/models.dart';
+import '../../services/live_ui_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 
@@ -272,8 +273,12 @@ class _PurchaseReturnFormState extends State<PurchaseReturnForm> {
           _smallField(_qtyC, _qtyF, 'Qty', () => _rateF.requestFocus()),
           const SizedBox(width: 5),
           _smallField(_rateC, _rateF, 'Rate', _addLine),
-          const SizedBox(width: 5),
-          _smallField(_gstC, null, 'GST%', _addLine, width: 52),
+          // v0.4.0 LIVE UI: GST input only while `enable_gst_fields` is
+          // on in Ruby Key (app_config/live_ui).
+          if (LiveUiService.instance.config.value.enableGstFields) ...[
+            const SizedBox(width: 5),
+            _smallField(_gstC, null, 'GST%', _addLine, width: 52),
+          ],
           const SizedBox(width: 4),
           IconButton(
             onPressed: _addLine,
