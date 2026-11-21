@@ -12,6 +12,17 @@ import '../core/formatters.dart';
 import '../data/repo.dart';
 import '../models/models.dart';
 
+/// One printed row of the ledger statement: date, particulars, billed,
+/// received and the running balance.
+class _StmtRow {
+  final DateTime date;
+  final String title;
+  final int debitPaise;
+  final int creditPaise;
+  final int balancePaise;
+  _StmtRow(this.date, this.title, this.debitPaise, this.creditPaise, this.balancePaise);
+}
+
 /// Bill PDFs in three formats:
 ///   * A4 MEMO (default, v0.3.0) - the classic Shivam-style paper memo:
 ///     business logo printed black & white at the top, DEBIT MEMO /
@@ -102,6 +113,7 @@ class PdfService {
     required List<BillItem> items,
     required Map<String, String> shop,
     String customerCity = '',
+    String customerShop = '',
     String customerPhone = '',
     int balanceAfterPaise = 0,
     bool isCashMemo = false,
@@ -120,12 +132,17 @@ class PdfService {
     final shopPhone = shop['shop_phone'] ?? '';
     final gstin = shop['gstin'] ?? '';
 
+    // The party identity, Miracle-style: CITY first, then the shop name,
+    // one line, ALL CAPS - "BHUJ - MAHOBAT IMITATION". Never the person
+    // name when a shop name exists.
+    final party = partyLine(customerCity, customerShop, bill.customerName);
+
     final (logo, sign) = await loadBranding();
 
     if (format == 'a4') {
       final pages = _a4MemoPages(
         bill, items, shopName, shopAddr, shopPhone, gstin,
-        customerCity, customerPhone, balanceAfterPaise,
+        party, customerPhone, balanceAfterPaise,
         isCashMemo, logo, sign,
       );
       _lastPageCount = pages.length;
@@ -135,11 +152,11 @@ class PdfService {
     } else if (format == 'a5') {
       _lastPageCount = 1;
       doc.addPage(_a5Page(bill, items, shopName, shopAddr, shopPhone, gstin,
-          customerCity, customerPhone, balanceAfterPaise));
+          party, customerPhone, balanceAfterPaise));
     } else {
       _lastPageCount = 1;
       doc.addPage(_thermalPage(bill, items, shopName, shopAddr, shopPhone, gstin,
-          customerCity, customerPhone, balanceAfterPaise));
+          party, customerPhone, balanceAfterPaise));
     }
 
     final dir = await getTemporaryDirectory();
@@ -147,6 +164,22 @@ class PdfService {
     final f = File('${dir.path}/${memoKind}_${bill.billNo}_${bill.billDay}.pdf');
     await f.writeAsBytes(await doc.save());
     return f;
+  }
+
+  /// The party line printed on bills and statements - Miracle style:
+  /// the CITY comes FIRST, then the shop name, one line, ALL CAPS:
+  /// "BHUJ - MAHOBAT IMITATION". Falls back to the stored bill name when
+  /// the shop name was never filled in.
+  String partyLine(String city, String shopName, String fallback) {
+    final c = city.trim();
+    final s = shopName.trim();
+    final fb = fallback.trim().toUpperCase();
+    if (c.isNotEmpty && s.isNotEmpty) {
+      return '${c.toUpperCase()} - ${s.toUpperCase()}';
+    }
+    if (s.isNotEmpty) return s.toUpperCase();
+    if (c.isNotEmpty && fb.isNotEmpty) return '${c.toUpperCase()} - $fb';
+    return fb;
   }
 
   /// Shares the bill the way the party reads it best: PAGE IMAGES.
@@ -158,6 +191,7 @@ class PdfService {
     required List<BillItem> items,
     required Map<String, String> shop,
     String customerCity = '',
+    String customerShop = '',
     String customerPhone = '',
     int balanceAfterPaise = 0,
     bool isCashMemo = false,
@@ -167,13 +201,15 @@ class PdfService {
       items: items,
       shop: shop,
       customerCity: customerCity,
+      customerShop: customerShop,
       customerPhone: customerPhone,
       balanceAfterPaise: balanceAfterPaise,
       isCashMemo: isCashMemo,
     );
+    final party = partyLine(customerCity, customerShop, bill.customerName);
     final images = await rasterizePdfToImages(f.path);
     final text = '${isCashMemo ? 'Cash memo' : 'Bill'} #${bill.billNo} - '
-        '${bill.customerName} - ${Money.fmt(bill.totalPaise)}';
+        '$party - ${Money.fmt(bill.totalPaise)}';
     if (images.isNotEmpty) {
       await Share.shareXFiles(
         [for (final p in images) XFile(p, mimeType: 'image/jpeg')],
@@ -189,6 +225,337 @@ class PdfService {
     }
   }
 
+  // ================= customer ledger statement (full year) =================
+
+  /// The customer's account statement for the WHOLE Indian financial
+  /// year (1 Apr - 31 Mar): opening balance, every bill, every payment,
+  /// the running balance and the closing balance - the four numbers the
+  /// shop needs at a glance are in the summary box. Shared as PAGE
+  /// IMAGES so the party reads it right inside WhatsApp.
+  Future<void> shareStatement({
+    required Customer customer,
+    required List<LedgerEntry> entries,
+    required Map<String, String> shop,
+  }) async {
+    final f = await _buildStatementFile(
+        customer: customer, entries: entries, shop: shop);
+    final party = partyLine(customer.city, customer.shopName, customer.name);
+    final images = await rasterizePdfToImages(f.path);
+    final text = 'Ledger statement (full year) - $party';
+    if (images.isNotEmpty) {
+      await Share.shareXFiles(
+        [for (final p in images) XFile(p, mimeType: 'image/jpeg')],
+        subject: text,
+        text: text,
+      );
+    } else {
+      await Share.shareXFiles([XFile(f.path)], subject: text, text: text);
+    }
+  }
+
+  Future<File> _buildStatementFile({
+    required Customer customer,
+    required List<LedgerEntry> entries,
+    required Map<String, String> shop,
+  }) async {
+    await _loadFonts();
+    final now = DateTime.now();
+    final fy = Dt.fyStartYear(now);
+    final fyStart = Dt.fyStart(fy);
+
+    // Balance carried INTO this financial year = the running balance
+    // after the last entry dated before 1 April. Entries come sorted
+    // oldest -> newest from the repository.
+    int fyOpening = 0;
+    for (final e in entries) {
+      if (e.date.isBefore(fyStart)) {
+        fyOpening = e.runningBalancePaise;
+      } else {
+        break;
+      }
+    }
+
+    int running = fyOpening;
+    int totalBilled = 0;
+    int totalReceived = 0;
+    final rows = <_StmtRow>[];
+    for (final e in entries) {
+      if (e.date.isBefore(fyStart)) continue;
+      running += e.debitPaise - e.creditPaise;
+      // Payments AND sales returns both credit the account, so
+      // Opening + Billed - Received always equals the Closing balance
+      // exactly (returns appear as their own rows in the table).
+      if (e.kind == 'bill') totalBilled += e.debitPaise;
+      if (e.kind == 'payment' || e.kind == 'sales_return') {
+        totalReceived += e.creditPaise;
+      }
+      rows.add(_StmtRow(e.date, e.title, e.debitPaise, e.creditPaise, running));
+    }
+    final closing = running;
+
+    final shopName = (shop['shop_name'] ?? '').isNotEmpty
+        ? shop['shop_name']!
+        : 'Ruby Invoice';
+    final shopAddr = shop['shop_addr'] ?? '';
+    final shopPhone = shop['shop_phone'] ?? '';
+    final gstin = shop['gstin'] ?? '';
+    final party = partyLine(customer.city, customer.shopName, customer.name);
+    final partyPhone = customer.phone;
+
+    final periodEnd = rows.isEmpty ? now : rows.last.date;
+    final periodText = '${Dt.fmtDate(fyStart)} to ${Dt.fmtDate(periodEnd)}';
+
+    final doc = pw.Document(
+      theme: pw.ThemeData.withFont(base: _regular!, bold: _bold!),
+    );
+
+    doc.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      marginAll: 34,
+      footer: (ctx) => pw.Center(
+        child: pw.Text(
+          'Powered by Ruby Invoice  |  Page ${ctx.pageNumber} of ${ctx.pagesCount}',
+          style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey600),
+        ),
+      ),
+      build: (ctx) => [
+        // ----- letterhead -----
+        pw.Center(
+          child: pw.Text(shopName.toUpperCase(),
+              style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold)),
+        ),
+        if (shopAddr.isNotEmpty)
+          pw.Center(
+              child: pw.Text(shopAddr, style: const pw.TextStyle(fontSize: 8.5))),
+        pw.Center(
+          child: pw.Text(
+            [
+              if (shopPhone.isNotEmpty) 'Ph: $shopPhone',
+              if (gstin.isNotEmpty) 'GSTIN: $gstin',
+            ].join('  |  '),
+            style: const pw.TextStyle(fontSize: 8.5),
+          ),
+        ),
+        pw.Container(
+          margin: const pw.EdgeInsets.symmetric(vertical: 8),
+          height: 1.2,
+          color: PdfColors.black,
+        ),
+
+        // ----- title + party -----
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text('LEDGER STATEMENT',
+                    style: pw.TextStyle(
+                        fontSize: 13,
+                        fontWeight: pw.FontWeight.bold,
+                        letterSpacing: 1)),
+                pw.SizedBox(height: 4),
+                pw.Text(party,
+                    style: pw.TextStyle(
+                        fontSize: 11.5, fontWeight: pw.FontWeight.bold)),
+                if (partyPhone.isNotEmpty)
+                  pw.Text('Ph: $partyPhone',
+                      style: const pw.TextStyle(fontSize: 9)),
+              ],
+            ),
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.end,
+              children: [
+                pw.Text(Dt.fyLabel(fy),
+                    style: pw.TextStyle(
+                        fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                pw.SizedBox(height: 4),
+                pw.Text('Period: $periodText',
+                    style: const pw.TextStyle(fontSize: 9)),
+                pw.Text('Printed on ${Dt.fmtDate(now)}',
+                    style: const pw.TextStyle(fontSize: 9)),
+              ],
+            ),
+          ],
+        ),
+        pw.SizedBox(height: 10),
+
+        // ----- year summary box: the four numbers that matter -----
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+          decoration: pw.BoxDecoration(
+            border: pw.Border.all(width: 0.9),
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+            color: PdfColors.grey100,
+          ),
+          child: pw.Row(
+            children: [
+              _summaryCell('OPENING BALANCE', Money.fmt(fyOpening)),
+              _summaryCell('TOTAL BILLED', Money.fmt(totalBilled)),
+              _summaryCell('TOTAL RECEIVED', Money.fmt(totalReceived)),
+              _summaryCell('CLOSING BALANCE', Money.fmt(closing), strong: true),
+            ],
+          ),
+        ),
+        pw.SizedBox(height: 10),
+
+        // ----- transactions -----
+        _stmtTable(fyOpening, rows),
+        pw.SizedBox(height: 8),
+
+        // ----- closing line -----
+        pw.Container(
+          width: double.infinity,
+          padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+          decoration: pw.BoxDecoration(
+            border: pw.Border.all(width: 1),
+            color: PdfColors.grey100,
+          ),
+          child: pw.Text(
+            closing > 0
+                ? 'Closing balance: ${Money.fmt(closing)} DUE (customer owes)'
+                : closing < 0
+                    ? 'Closing balance: ${Money.fmt(-closing)} ADVANCE (paid extra)'
+                    : 'Closing balance: SETTLED - nothing due',
+            style: pw.TextStyle(fontSize: 10.5, fontWeight: pw.FontWeight.bold),
+          ),
+        ),
+
+        pw.SizedBox(height: 30),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: pw.CrossAxisAlignment.end,
+          children: [
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Container(
+                    width: 150,
+                    decoration: const pw.BoxDecoration(
+                        border: pw.Border(
+                            bottom: pw.BorderSide(width: 0.7)))),
+                pw.SizedBox(height: 4),
+                pw.Text('For $shopName',
+                    style: pw.TextStyle(
+                        fontSize: 9, fontWeight: pw.FontWeight.bold)),
+              ],
+            ),
+            pw.Text('Computer generated statement',
+                style: const pw.TextStyle(
+                    fontSize: 7.5, color: PdfColors.grey600)),
+          ],
+        ),
+      ],
+    ));
+
+    final dir = await getTemporaryDirectory();
+    final f = File(
+        '${dir.path}/statement_${customer.id.substring(0, 8)}_${Dt.dayKey(now)}.pdf');
+    await f.writeAsBytes(await doc.save());
+    return f;
+  }
+
+  /// One summary cell of the year box (label on top, value below).
+  pw.Widget _summaryCell(String label, String value, {bool strong = false}) {
+    return pw.Expanded(
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
+        children: [
+          pw.Text(label,
+              style: const pw.TextStyle(
+                  fontSize: 7.5,
+                  color: PdfColors.grey700,
+                  letterSpacing: 0.5)),
+          pw.SizedBox(height: 3),
+          pw.Text(
+            value,
+            style: pw.TextStyle(
+              fontSize: strong ? 11.5 : 10.5,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Transactions table: Date | Particulars | Billed | Received | Balance.
+  /// Manual pw.Table so the money columns stay right-aligned; it splits
+  /// across pages automatically inside MultiPage.
+  pw.Widget _stmtTable(int fyOpening, List<_StmtRow> rows) {
+    pw.Text cell(String t,
+            {bool right = false, bool bold = false, double size = 8.5}) =>
+        pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+          child: pw.Text(
+            t,
+            textAlign: right ? pw.TextAlign.right : pw.TextAlign.left,
+            style: pw.TextStyle(
+              fontSize: size,
+              fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+            ),
+          ),
+        );
+
+    String dateText(DateTime d) =>
+        '${d.day} ${Dt.months[d.month - 1]} ${d.year}';
+
+    final data = <pw.TableRow>[];
+    data.add(pw.TableRow(
+      decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+      children: [
+        cell('Date', bold: true),
+        cell('Particulars', bold: true),
+        cell('Billed', right: true, bold: true),
+        cell('Received', right: true, bold: true),
+        cell('Balance', right: true, bold: true),
+      ],
+    ));
+
+    if (fyOpening != 0) {
+      data.add(pw.TableRow(children: [
+        cell('-'),
+        cell('Opening balance (brought forward)'),
+        cell(fyOpening > 0 ? Money.fmt(fyOpening, withSymbol: false) : '-',
+            right: true),
+        cell(fyOpening < 0
+            ? Money.fmt(-fyOpening, withSymbol: false)
+            : '-',
+            right: true),
+        cell(Money.fmt(fyOpening, withSymbol: false), right: true),
+      ]));
+    }
+
+    for (final r in rows) {
+      data.add(pw.TableRow(children: [
+        cell(dateText(r.date)),
+        cell(r.title),
+        cell(r.debitPaise > 0
+            ? Money.fmt(r.debitPaise, withSymbol: false)
+            : '-',
+            right: true),
+        cell(r.creditPaise > 0
+            ? Money.fmt(r.creditPaise, withSymbol: false)
+            : '-',
+            right: true),
+        cell(Money.fmt(r.balancePaise, withSymbol: false), right: true),
+      ]));
+    }
+
+    return pw.Table(
+      border: pw.TableBorder.all(width: 0.5),
+      columnWidths: const {
+        0: pw.FixedColumnWidth(62),
+        1: pw.FlexColumnWidth(4),
+        2: pw.FixedColumnWidth(62),
+        3: pw.FixedColumnWidth(62),
+        4: pw.FixedColumnWidth(70),
+      },
+      children: data,
+    );
+  }
+
   // ================= A4 memo (default, Shivam-style) =================
 
   /// Exactly 25 item lines per page - the 26th product opens page 2,
@@ -202,7 +569,7 @@ class PdfService {
     String shopAddr,
     String shopPhone,
     String gstin,
-    String customerCity,
+    String partyTitle,
     String customerPhone,
     int balanceAfterPaise,
     bool isCashMemo,
@@ -295,14 +662,12 @@ class PdfService {
                   pw.Text('BILL TO',
                       style: pw.TextStyle(
                           fontSize: 7, fontWeight: pw.FontWeight.bold)),
-                  pw.Text(bill.customerName,
+                  pw.Text(partyTitle,
                       style: pw.TextStyle(
                           fontSize: 11.5, fontWeight: pw.FontWeight.bold)),
-                  if (customerCity.isNotEmpty || customerPhone.isNotEmpty)
+                  if (customerPhone.isNotEmpty)
                     pw.Text(
-                      [customerCity, customerPhone]
-                          .where((e) => e.isNotEmpty)
-                          .join('   |   '),
+                      customerPhone,
                       style: const pw.TextStyle(fontSize: 9),
                     ),
                 ],
@@ -803,7 +1168,7 @@ class PdfService {
     String shopAddr,
     String shopPhone,
     String gstin,
-    String customerCity,
+    String partyTitle,
     String customerPhone,
     int balanceAfterPaise,
   ) {
@@ -848,11 +1213,11 @@ class PdfService {
         ],
       ),
       pw.SizedBox(height: 2),
-      pw.Text(bill.customerName,
+      pw.Text(partyTitle,
           style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
-      if (customerCity.isNotEmpty || customerPhone.isNotEmpty)
+      if (customerPhone.isNotEmpty)
         pw.Text(
-          [customerCity, customerPhone].where((e) => e.isNotEmpty).join('  |  '),
+          customerPhone,
           style: const pw.TextStyle(fontSize: 8),
         ),
       pw.Container(
@@ -989,10 +1354,10 @@ class PdfService {
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 pw.Text('BILL TO', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
-                pw.Text(bill.customerName,
+                pw.Text(partyTitle,
                     style: pw.TextStyle(fontSize: 11.5, fontWeight: pw.FontWeight.bold)),
                 pw.Text(
-                  [customerCity, customerPhone].where((e) => e.isNotEmpty).join('   |   '),
+                  customerPhone,
                   style: const pw.TextStyle(fontSize: 9),
                 ),
               ],

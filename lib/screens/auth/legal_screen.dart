@@ -83,7 +83,7 @@ class LegalScreen extends StatelessWidget {
       return const [
         _Sec('1. What this app is',
             'Ruby Invoice is an offline-first billing app for shops. Bills, '
-            'customers, the ledger (jama/udhar), inventory and purchase '
+            'customers, the customer ledger, inventory and purchase '
             'records are stored FIRST on your phone, inside the app\u2019s own '
             'secured storage. When you sign in, the same data syncs to your '
             'own private cloud account so your two devices stay identical.'),

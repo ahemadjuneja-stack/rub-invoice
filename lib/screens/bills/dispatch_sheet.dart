@@ -402,7 +402,7 @@ class _DispatchSheetState extends State<_DispatchSheet> {
                 maxLines: 3,
                 minLines: 2,
                 decoration: const InputDecoration(
-                  hintText: 'Transport note (optional) - transporter name, GR no, etc.',
+                  hintText: 'Note',
                 ),
               ),
               const SizedBox(height: 16),

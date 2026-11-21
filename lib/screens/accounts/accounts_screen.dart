@@ -98,7 +98,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
     final now = DateTime.now();
     return Scaffold(
       appBar: const RubyAppBar(
-          title: 'Accounts (Hisab)',
+          title: 'Accounts',
           subtitle: 'Sales, purchases, returns - everything in one place'),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: Ruby.ruby))
@@ -158,7 +158,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            advance ? 'TOTAL ADVANCE (JAMA EXTRA)' : 'TOTAL UDHAAR (TO COLLECT)',
+            advance ? 'TOTAL ADVANCE' : 'TOTAL DUE (TO COLLECT)',
             style: const TextStyle(
                 fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 1.1, color: Color(0xFFF3B7BC)),
           ),

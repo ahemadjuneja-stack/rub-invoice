@@ -751,7 +751,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
       ),
       child: Column(
         children: [
-          _row('Subtotal (maal)', _subtotalPaise),
+          _row('Subtotal', _subtotalPaise),
           _row('GST total', _gstPaise),
           Row(
             children: [

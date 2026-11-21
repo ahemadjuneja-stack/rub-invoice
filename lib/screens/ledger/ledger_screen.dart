@@ -11,6 +11,7 @@ import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../models/settlement.dart';
 import '../../data/repo.dart';
+import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
 import '../billing/billing_screen.dart';
 import '../../widgets/widgets.dart';
@@ -84,6 +85,27 @@ class _LedgerScreenState extends State<LedgerScreen> {
     }
   }
 
+  /// Share the FULL financial-year statement (jama / udhaar / closing
+  /// balance) as a picture the customer can read directly in WhatsApp.
+  Future<void> _shareStatement() async {
+    final cust = _customer;
+    if (cust == null) return;
+    if (mounted) showSnack(context, 'Preparing statement image...');
+    try {
+      final shop = await Repo.instance.shopProfile();
+      await PdfService.instance.shareStatement(
+        customer: cust,
+        entries: _entries,
+        shop: shop,
+      );
+    } catch (_) {
+      if (mounted) {
+        showSnack(context, 'Statement could not be created - try again',
+            error: true);
+      }
+    }
+  }
+
   Future<bool?> _paymentDialog() async {
     final amountC = TextEditingController(
       text: _balance > 0 ? Money.fmtRupeesInput(_balance) : '',
@@ -114,7 +136,7 @@ class _LedgerScreenState extends State<LedgerScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Receive Payment (Jama)',
+                'Receive Payment',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Ruby.ink),
               ),
               if (_balance > 0)
@@ -236,7 +258,7 @@ class _LedgerScreenState extends State<LedgerScreen> {
                   Expanded(
                     child: TextField(
                       controller: noteC,
-                      decoration: const InputDecoration(hintText: 'Note (optional)', isDense: true),
+                      decoration: const InputDecoration(hintText: 'Note', isDense: true),
                     ),
                   ),
                 ],
@@ -322,10 +344,22 @@ class _LedgerScreenState extends State<LedgerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // KEYBOARD FIX (same as the billing screen): a stale keyboard inset
+    // on some devices used to push the whole ledger up and keep a blank
+    // strip after the keyboard closed. No focus = no real keyboard.
+    final keyboardOpen =
+        MediaQuery.of(context).viewInsets.bottom > 0 &&
+            FocusManager.instance.primaryFocus != null;
     return Scaffold(
+      resizeToAvoidBottomInset: keyboardOpen,
       appBar: RubyAppBar(
         title: widget.customerName,
         actions: [
+          IconButton(
+            onPressed: _loading ? null : _shareStatement,
+            icon: const Icon(Icons.picture_as_pdf_outlined),
+            tooltip: 'Share statement (full year)',
+          ),
           IconButton(onPressed: _editCustomer, icon: const Icon(Icons.edit_outlined)),
         ],
       ),
@@ -414,10 +448,10 @@ class _LedgerScreenState extends State<LedgerScreen> {
     final String label;
     final Color color;
     if (_balance > 0) {
-      label = 'Balance Due (Udhar)';
+      label = 'Balance Due';
       color = Ruby.ruby;
     } else if (_balance < 0) {
-      label = 'Advance (Jama extra)';
+      label = 'Advance';
       color = Ruby.green;
     } else {
       label = 'Settled';

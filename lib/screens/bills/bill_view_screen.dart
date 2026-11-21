@@ -88,6 +88,7 @@ class _BillViewScreenState extends State<BillViewScreen> {
       items: _items,
       shop: _shop,
       customerCity: _city,
+      customerShop: _cust?.shopName ?? '',
       customerPhone: _phone,
       balanceAfterPaise: _balanceAfter,
       isCashMemo: paidOnBill >= _bill!.totalPaise,
@@ -111,14 +112,19 @@ class _BillViewScreenState extends State<BillViewScreen> {
     if (mounted) Navigator.pop(context);
   }
 
-  /// Miracle-style identity: "City - Name" (e.g. "Rajkot - Riya") on
-  /// one line, exactly like the billing screen header.
+  /// Miracle-style identity, EXACTLY like the printed bill: the city
+  /// comes first, then the shop name, one line, ALL CAPS -
+  /// "BHUJ - MAHOBAT IMITATION" (never the person's name on a bill).
   String get _customerTitle {
     final city = _city.trim();
     final shop = (_cust?.shopName ?? '').trim();
-    final label = shop.isNotEmpty ? shop : (_bill?.customerName ?? '');
-    if (city.isNotEmpty && label.isNotEmpty) return '$city - $label';
-    return label;
+    final label = shop.isNotEmpty
+        ? shop
+        : (_bill?.customerName ?? '').trim();
+    if (city.isNotEmpty && label.isNotEmpty) {
+      return '${city.toUpperCase()} - ${label.toUpperCase()}';
+    }
+    return label.toUpperCase();
   }
 
   @override

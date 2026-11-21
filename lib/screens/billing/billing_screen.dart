@@ -346,7 +346,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
         context,
         title: 'Received more than total',
         message:
-            'Received amount is more than the bill total. The extra becomes advance (jama) in the customer ledger. Save anyway?',
+            'Received amount is more than the bill total. The extra becomes advance in the customer ledger. Save anyway?',
         ok: 'Save',
       );
       if (!ok) return;
@@ -499,7 +499,17 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
+    // KEYBOARD FIX: on some Android devices the reported keyboard inset
+    // never resets to zero after the keyboard closes - a blank strip
+    // stays at the bottom and the whole layout stays pushed up for good.
+    // The keyboard can only really be open while some text field has
+    // focus; an inset reported with NO focused field is stale, so the
+    // layout ignores it and springs back immediately.
+    final keyboardOpen =
+        MediaQuery.of(context).viewInsets.bottom > 0 &&
+            FocusManager.instance.primaryFocus != null;
     return Scaffold(
+      resizeToAvoidBottomInset: keyboardOpen,
       // No R chip here - the full width belongs to the customer identity,
       // exactly like the printed header of a bill.
       appBar: RubyAppBar(
@@ -883,7 +893,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                 Expanded(
                   child: _payChip(
                     value: 'udhar',
-                    label: 'CREDIT / UDHAR',
+                    label: 'CREDIT / DUE',
                     icon: Icons.schedule_outlined,
                   ),
                 ),
@@ -891,7 +901,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                 Expanded(
                   child: _payChip(
                     value: 'jama',
-                    label: 'CASH / JAMA',
+                    label: 'CASH / RECEIVED',
                     icon: Icons.payments_outlined,
                   ),
                 ),
@@ -936,7 +946,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _payMode == 'jama' ? 'GRAND TOTAL' : 'TOTAL UDHAR',
+                        _payMode == 'jama' ? 'GRAND TOTAL' : 'TOTAL CREDIT',
                         style: const TextStyle(fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.w800, color: Color(0xFFF3B7BC)),
                       ),
                       Text(

@@ -938,7 +938,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               );
             }),
             if (rc.feature('ledger'))
-              _menuCard(Icons.book_outlined, 'Customer Ledger (Jama / Udhar)', () {
+              _menuCard(Icons.book_outlined, 'Customer Ledger', () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)),
@@ -954,7 +954,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _menuCard(Icons.keyboard_return, 'Sales Return (Customer)', () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesReturnScreen()));
             }),
-            _menuCard(Icons.account_balance_wallet_outlined, 'Accounts (Hisab)', () {
+            _menuCard(Icons.account_balance_wallet_outlined, 'Accounts', () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()));
             }),
             // Sales Reports was removed (v0.3.1): every number - sales,
