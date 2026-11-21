@@ -70,13 +70,31 @@ jobs:
             echo "  CHECK 4: After adding secrets, trigger a FRESH run (Re-run all jobs on the latest run, or push)."
             exit 1
           fi
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/ruby-invoice-v2.keystore
+          if ! echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/ruby-invoice-v2.keystore 2>/tmp/b64err; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is NOT valid base64 - the value got mangled/truncated while pasting (common on phone)."
+            cat /tmp/b64err
+            echo "FIX: open the ANDROID_KEYSTORE_BASE64.txt download link in Chrome -> long-press -> Select all -> Copy -> paste into the secret -> Update secret."
+            exit 1
+          fi
+          echo "decoded ANDROID_KEYSTORE_BASE64: $(wc -c < android/app/ruby-invoice-v2.keystore) bytes (expected 2804 = ruby-invoice-v2.keystore)"
           {
             echo "storeFile=ruby-invoice-v2.keystore"
             echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
             echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}"
             echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}"
           } > android/key.properties
+          # Prove the NEW keystore actually opens with the provided password
+          # and alias - catches swapped/misplaced secret values HERE with a
+          # clear message instead of an opaque failure at the signing step.
+          if ! keytool -list -keystore android/app/ruby-invoice-v2.keystore \
+                -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+                -storetype PKCS12 -alias "${{ secrets.ANDROID_KEY_ALIAS }}" > /tmp/kt-new.log 2>&1; then
+            echo "::error::NEW keystore does NOT open with the provided ANDROID_KEYSTORE_PASSWORD + ANDROID_KEY_ALIAS."
+            echo "Most likely the two base64 values got swapped between the two secrets, or a paste typo. keytool says:"
+            cat /tmp/kt-new.log
+            exit 1
+          fi
+          echo "NEW keystore OK: opens with the provided password, alias present ($(grep -c PrivateKeyEntry /tmp/kt-new.log) PrivateKeyEntry)."
           echo "Rotated keystore restored from GitHub Secrets."
 
       # OPTIONAL 5th secret (Android 7/8 update compatibility): the
@@ -89,8 +107,22 @@ jobs:
       - name: Restore retired old keystore (optional, Android 7/8 band)
         run: |
           if [ -n "${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}" | base64 -d > /tmp/old-key.keystore
-            echo "OLD_KEYSTORE_AVAILABLE=true" >> "$GITHUB_ENV"
+            if echo "${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}" | base64 -d > /tmp/old-key.keystore 2>/tmp/b64old; then
+              echo "decoded ANDROID_OLD_KEYSTORE_BASE64: $(wc -c < /tmp/old-key.keystore) bytes (expected 2772 = retired old keystore)"
+              if keytool -list -keystore /tmp/old-key.keystore -storepass rubyinvoice \
+                    -storetype PKCS12 -alias ruby_invoice > /tmp/kt-old.log 2>&1; then
+                echo "OLD keystore OK: opens with the public legacy password."
+                echo "OLD_KEYSTORE_AVAILABLE=true" >> "$GITHUB_ENV"
+              else
+                echo "::warning::ANDROID_OLD_KEYSTORE_BASE64 decoded but does NOT open with the legacy password - value looks swapped or mis-pasted. Skipping the Android 7/8 band (new-key-only APK)."
+                cat /tmp/kt-old.log
+                echo "OLD_KEYSTORE_AVAILABLE=false" >> "$GITHUB_ENV"
+              fi
+            else
+              echo "::warning::ANDROID_OLD_KEYSTORE_BASE64 is not valid base64 - skipping the Android 7/8 band."
+              cat /tmp/b64old
+              echo "OLD_KEYSTORE_AVAILABLE=false" >> "$GITHUB_ENV"
+            fi
           else
             echo "::warning::ANDROID_OLD_KEYSTORE_BASE64 not set - Android 7/8 (API 24-27) users will need one uninstall+reinstall to update."
             echo "OLD_KEYSTORE_AVAILABLE=false" >> "$GITHUB_ENV"
