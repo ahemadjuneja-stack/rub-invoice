@@ -37,6 +37,31 @@ Rules that make this safe:
   ledgers (sales_returns + purchase_returns), which were the gap found
   in the independent audit.
 
+## Device remove / reset (tested - `test/device_slot_removal_test.dart`)
+
+`registeredDevices = [A, B]`, admin A ko remove/reset karta hai:
+
+1. **A removed, B alone (`[B]`)** - B is the only registered device ->
+   slot 0 -> plain numbering continues exactly where the legacy/slot-0
+   sequence stopped (e.g. 1,2 -> next = 3). B's old 200,xxx numbers stay
+   untouched. No collision possible (A is gone, nobody else allocates).
+2. **A re-added (`[B, A]`)** - append-only, positions re-home: B ->
+   slot 1, A -> slot 2. Allocation is MAX+1 INSIDE the target range, so
+   B's new numbers continue AFTER A's old 100,xxx numbers and A's new
+   numbers continue AFTER B's old 200,xxx numbers - no existing number
+   is ever reused or duplicated.
+3. **Stale-cache window (the honest corner case)** - if B was OFFLINE
+   during the reset, B keeps its old cached slot until the next account
+   refresh (snapshot listener fires within seconds when online; every
+   sync tick calls verifyOnce). In that window two devices can
+   temporarily hold the same slot and pick the same number (each phone
+   cannot see the other's unsynced rows). The duplicate lands in the
+   cloud after both sides sync; the healer then renumbers
+   deterministically (oldest keeps the number, others move past
+   MAX+1, unsynced rows are never touched) and both phones converge
+   on the next pull. Data is never lost; a printed bill may carry the
+   pre-heal number (same trade-off as the v0.4.1 healer design).
+
 ## Mixed-version note
 
 Until BOTH phones install the update, an old-version phone still uses
