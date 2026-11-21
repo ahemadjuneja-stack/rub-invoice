@@ -97,7 +97,9 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             leading: const Icon(Icons.workspace_premium_outlined, color: Ruby.ruby, size: 22),
             title: const Text('Subscription',
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Ruby.ink)),
-            subtitle: const Text('7-day free trial - online plans coming soon',
+            // v0.3.1: no trial wording anywhere - accounts are usable
+            // right after registration; validity is managed from here.
+            subtitle: const Text('Plans, validity & renewal management',
                 style: TextStyle(fontSize: 12, color: Ruby.muted)),
             trailing: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),

@@ -62,7 +62,7 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
     return Scaffold(
       appBar: RubyAppBar(
         title: 'Purchase Parties',
-        subtitle: 'Suppliers - jisse maal aata hai',
+        subtitle: 'Suppliers - goods come from these parties',
       ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Ruby.ruby,
@@ -200,7 +200,12 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
 /// Add / edit a purchase party (bottom sheet form).
 class SupplierFormSheet extends StatefulWidget {
   final Supplier? existing;
-  const SupplierFormSheet({this.existing});
+
+  /// Prefills the party name (used by the picker's inline "Add '<typed
+  /// name>' as new party" flow - the name the user searched for is
+  /// already in the form when it opens).
+  final String initialName;
+  const SupplierFormSheet({this.existing, this.initialName = ''});
 
   @override
   State<SupplierFormSheet> createState() => SupplierFormSheetState();
@@ -219,7 +224,7 @@ class SupplierFormSheetState extends State<SupplierFormSheet> {
   void initState() {
     super.initState();
     final e = widget.existing;
-    _nameC = TextEditingController(text: e?.name ?? '');
+    _nameC = TextEditingController(text: e?.name ?? widget.initialName);
     _shopC = TextEditingController(text: e?.shopName ?? '');
     _cityC = TextEditingController(text: e?.city ?? '');
     _phoneC = TextEditingController(text: e?.phone ?? '');
@@ -242,7 +247,7 @@ class SupplierFormSheetState extends State<SupplierFormSheet> {
   Future<void> _save() async {
     final name = _nameC.text.trim();
     if (name.isEmpty) {
-      showSnack(context, 'Party name likhiye', error: true);
+      showSnack(context, 'Enter the party name', error: true);
       return;
     }
     setState(() => _saving = true);

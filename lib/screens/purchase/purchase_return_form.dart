@@ -8,8 +8,8 @@ import '../../models/models.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 
-/// Purchase RETURN form: maal supplier ko wapas bheja. Item lines with
-/// rate + GST, note, date. The amount is credited in the supplier's
+/// Purchase RETURN form: goods going back to the supplier. Item lines
+/// with rate + GST, note, date. The amount is credited in the supplier's
 /// account automatically (supplier ledger merges purchase_returns in).
 class PurchaseReturnForm extends StatefulWidget {
   final Supplier supplier;
@@ -84,19 +84,19 @@ class _PurchaseReturnFormState extends State<PurchaseReturnForm> {
   void _addLine() {
     final name = _selected?.name ?? _nameC.text.trim();
     if (name.isEmpty) {
-      showSnack(context, 'Product name likhiye');
+      showSnack(context, 'Type the product name');
       _nameF.requestFocus();
       return;
     }
     final qty = double.tryParse(_qtyC.text.trim().replaceAll(',', '')) ?? 0;
     if (qty <= 0) {
-      showSnack(context, 'Quantity likhiye');
+      showSnack(context, 'Enter quantity');
       _qtyF.requestFocus();
       return;
     }
     final rate = Money.parsePaise(_rateC.text);
     if (rate <= 0) {
-      showSnack(context, 'Rate likhiye');
+      showSnack(context, 'Enter rate');
       _rateF.requestFocus();
       return;
     }
@@ -120,7 +120,7 @@ class _PurchaseReturnFormState extends State<PurchaseReturnForm> {
 
   Future<void> _save() async {
     if (_lines.isEmpty) {
-      showSnack(context, 'Kam se kam 1 item add karo');
+      showSnack(context, 'Add at least 1 item');
       return;
     }
     setState(() => _saving = true);
@@ -133,11 +133,11 @@ class _PurchaseReturnFormState extends State<PurchaseReturnForm> {
       );
       SyncService.instance.syncSoon();
       if (!mounted) return;
-      showSnack(context, 'Purchase return saved - party account me jama ho gaya');
+      showSnack(context, 'Purchase return saved - credited to the party account');
       Navigator.pop(context, true);
     } catch (_) {
       if (mounted) {
-        showSnack(context, 'Save fail hua - dobara try karo', error: true);
+        showSnack(context, 'Save failed - please try again', error: true);
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -165,9 +165,9 @@ class _PurchaseReturnFormState extends State<PurchaseReturnForm> {
                     border: Border.all(color: Ruby.line),
                   ),
                   child: const Text(
-                    'Jo maal party ko wapas bheja hai uski detail yahan '
-                    'likhiye. Amount is party ke account me JAMA ho jayega '
-                    '(bakaya kam ho jayega).',
+                    'Enter the details of everything that went back to the '
+                    'party. The amount is credited in this party\'s account '
+                    '(balance goes down).',
                     style: TextStyle(fontSize: 12.5, color: Ruby.muted),
                   ),
                 ),
@@ -181,7 +181,7 @@ class _PurchaseReturnFormState extends State<PurchaseReturnForm> {
                 TextField(
                   controller: _noteC,
                   decoration: const InputDecoration(
-                      hintText: 'Note (kya wapas gaya, kyun...)'),
+                      hintText: 'Note'),
                 ),
               ],
             ),
@@ -227,6 +227,8 @@ class _PurchaseReturnFormState extends State<PurchaseReturnForm> {
               textEditingController: _nameC,
               focusNode: _nameF,
               displayStringForOption: (p) => p.name,
+              // Selecting a suggestion fills name + qty + rate at once.
+              onSelected: _selectProduct,
               optionsBuilder: (TextEditingValue value) => _options(value.text),
               optionsViewBuilder: (context, onSelected, options) {
                 return Align(

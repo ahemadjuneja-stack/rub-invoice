@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -39,6 +39,23 @@ class PdfService {
     if (_regular != null) return;
     _regular = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     _bold = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'));
+  }
+
+  static const MethodChannel _pdfChannel = MethodChannel('ruby_invoice/pdf');
+
+  /// Renders a PDF file into plain JPEG images (one per page) using the
+  /// Android PdfRenderer via the platform channel. Empty list when the
+  /// device cannot render - callers then share the PDF itself.
+  Future<List<String>> rasterizePdfToImages(String pdfPath) async {
+    try {
+      if (!File(pdfPath).existsSync()) return const [];
+      final res = await _pdfChannel
+          .invokeMethod<List<Object?>>('renderPdfToImages', {'path': pdfPath});
+      return (res ?? const []).whereType<String>().toList();
+    } catch (e) {
+      appLog('[pdf] rasterize failed, sharing the PDF instead: $e');
+      return const [];
+    }
   }
 
   /// Loads an image file and converts it to BLACK & WHITE (grayscale) -
@@ -132,6 +149,10 @@ class PdfService {
     return f;
   }
 
+  /// Shares the bill the way the party reads it best: PAGE IMAGES.
+  /// WhatsApp shows pictures instantly - the bill is visible without
+  /// opening a PDF viewer. If image rendering is unavailable (rare)
+  /// the PDF file itself is shared as fallback.
   Future<void> shareBill({
     required Bill bill,
     required List<BillItem> items,
@@ -150,11 +171,22 @@ class PdfService {
       balanceAfterPaise: balanceAfterPaise,
       isCashMemo: isCashMemo,
     );
-    await Share.shareXFiles(
-      [XFile(f.path)],
-      subject: 'Bill #${bill.billNo} - ${bill.customerName}',
-      text: 'Bill #${bill.billNo} - ${Money.fmt(bill.totalPaise)}',
-    );
+    final images = await rasterizePdfToImages(f.path);
+    final text = '${isCashMemo ? 'Cash memo' : 'Bill'} #${bill.billNo} - '
+        '${bill.customerName} - ${Money.fmt(bill.totalPaise)}';
+    if (images.isNotEmpty) {
+      await Share.shareXFiles(
+        [for (final p in images) XFile(p, mimeType: 'image/jpeg')],
+        subject: text,
+        text: text,
+      );
+    } else {
+      await Share.shareXFiles(
+        [XFile(f.path)],
+        subject: text,
+        text: text,
+      );
+    }
   }
 
   // ================= A4 memo (default, Shivam-style) =================
@@ -211,7 +243,7 @@ class PdfService {
                     children: [
                       pw.Text(shopName.toUpperCase(),
                           style: pw.TextStyle(
-                              fontSize: 15, fontWeight: pw.FontWeight.bold)),
+                              fontSize: 14, fontWeight: pw.FontWeight.bold)),
                       if (shopAddr.isNotEmpty)
                         pw.Padding(
                           padding: const pw.EdgeInsets.only(top: 1),
@@ -233,8 +265,8 @@ class PdfService {
                   children: [
                     pw.Text(title,
                         style: pw.TextStyle(
-                            fontSize: 16, fontWeight: pw.FontWeight.bold,
-                            letterSpacing: 1.2)),
+                            fontSize: 14, fontWeight: pw.FontWeight.bold,
+                            letterSpacing: 1)),
                     pw.Text('Memo No: ${bill.billNo}',
                         style: const pw.TextStyle(fontSize: 9.5)),
                     pw.Text(Dt.fmtDayKey(bill.billDay),
@@ -413,11 +445,10 @@ class PdfService {
             pw.SizedBox(height: 4),
             pw.Center(
               child: pw.Text(
-                [
-                  if (shopPhone.isNotEmpty) shopPhone,
-                  'Powered by Ruby Invoice',
-                ].join('   |   '),
-                style: const pw.TextStyle(fontSize: 7.5),
+                // Same-to-same with the paper memo: just the business
+                // phone at the bottom, nothing else.
+                shopPhone,
+                style: const pw.TextStyle(fontSize: 8),
               ),
             ),
           ],
@@ -466,11 +497,22 @@ class PdfService {
     required List<PurchaseItem> items,
   }) async {
     final f = await buildPurchaseFile(purchase: purchase, items: items);
-    await Share.shareXFiles(
-      [XFile(f.path)],
-      subject: 'Purchase #${purchase.purchaseNo} - ${purchase.supplierName}',
-      text: 'Purchase #${purchase.purchaseNo} - ${Money.fmt(purchase.amountPaise)}',
-    );
+    final images = await rasterizePdfToImages(f.path);
+    final text = 'Purchase #${purchase.purchaseNo} - '
+        '${purchase.supplierName} - ${Money.fmt(purchase.amountPaise)}';
+    if (images.isNotEmpty) {
+      await Share.shareXFiles(
+        [for (final p in images) XFile(p, mimeType: 'image/jpeg')],
+        subject: text,
+        text: text,
+      );
+    } else {
+      await Share.shareXFiles(
+        [XFile(f.path)],
+        subject: text,
+        text: text,
+      );
+    }
   }
 
   Future<File> buildPurchaseFile({
@@ -609,8 +651,8 @@ class PdfService {
                 5: pw.FlexColumnWidth(2.3),
               },
               headerStyle: pw.TextStyle(
-                  fontSize: 9, fontWeight: pw.FontWeight.bold),
-              cellStyle: const pw.TextStyle(fontSize: 9),
+                  fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+              cellStyle: const pw.TextStyle(fontSize: 9.5),
               cellAlignment: pw.Alignment.centerLeft,
               headerDecoration:
                   const pw.BoxDecoration(color: PdfColors.grey200),
@@ -635,7 +677,7 @@ class PdfService {
                       pw.Row(
                           mainAxisAlignment: pw.MainAxisAlignment.end,
                           children: [
-                            pw.Text('Subtotal (maal)',
+                            pw.Text('Subtotal (goods)',
                                 style: const pw.TextStyle(fontSize: 10)),
                             pw.SizedBox(width: 14),
                             pw.Text(Money.fmt(purchase.subtotalPaise),
@@ -735,11 +777,9 @@ class PdfService {
             pw.SizedBox(height: 4),
             pw.Center(
               child: pw.Text(
-                [
-                  if (shopPhone.isNotEmpty) shopPhone,
-                  'Powered by Ruby Invoice',
-                ].join('   |   '),
-                style: const pw.TextStyle(fontSize: 7.5),
+                // Same-to-same with the paper memo: phone only.
+                shopPhone,
+                style: const pw.TextStyle(fontSize: 8),
               ),
             ),
           ],

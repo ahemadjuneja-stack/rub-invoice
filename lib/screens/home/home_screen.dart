@@ -22,7 +22,7 @@ import '../customer/customer_search_screen.dart';
 import '../customer/sales_return_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../purchase/purchase_screen.dart';
-import '../reports/reports_screen.dart';
+
 import '../settings/app_settings_screen.dart';
 import '../settings/settings_screen.dart';
 
@@ -957,10 +957,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _menuCard(Icons.account_balance_wallet_outlined, 'Accounts (Hisab)', () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()));
             }),
-            if (rc.feature('reports'))
-              _menuCard(Icons.ssid_chart, 'Sales Reports', () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportsScreen()));
-              }),
+            // Sales Reports was removed (v0.3.1): every number - sales,
+            // purchases, returns, money in/out - lives in ONE place now,
+            // the Accounts (Hisab) screen. No more scattered data.
             _menuCard(Icons.picture_as_pdf_outlined, 'Bill Format & PDF / Share', () {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
             }),

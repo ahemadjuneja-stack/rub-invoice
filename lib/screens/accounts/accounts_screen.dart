@@ -5,14 +5,15 @@ import '../../core/theme.dart';
 import '../../data/repo.dart';
 import '../../widgets/widgets.dart';
 
-/// Accounts (hisab) - the shop's money at a glance, Miracle-style:
-///   * Total udhaar to collect from all customers
-///   * Total purchases (maal kharida)
-///   * Money in / money out for this month
-///   * Money in / money out for the Indian financial year (Apr - Mar)
-/// The FY always runs April to March. Years before the current one
-/// appear only when old-dated data was actually entered - the list is
-/// built from the earliest transaction in the database.
+/// ACCOUNTS (Hisab) - THE single place for every number of the shop.
+/// Sales, sales returns, purchases, purchase returns, money in and
+/// money out all live HERE - there is no separate sales-report screen
+/// any more, nothing is scattered around (v0.3.1).
+///
+/// Two periods side by side: This Month and the Indian financial year
+/// (April - March). Older years appear in the selector only when
+/// old-dated data actually exists. The NET row is the one figure that
+/// adds it all up: money in minus money out for the chosen period.
 class AccountsScreen extends StatefulWidget {
   const AccountsScreen({super.key});
 
@@ -22,11 +23,15 @@ class AccountsScreen extends StatefulWidget {
 
 class _AccountsScreenState extends State<AccountsScreen> {
   int _udhaar = 0;
-  int _purchases = 0;
+  int _purchasesAll = 0;
   int _inMonth = 0;
   int _outMonth = 0;
   int _inFy = 0;
   int _outFy = 0;
+  ({int sales, int salesReturns, int purchases, int purchaseReturns})?
+      _monthTotals;
+  ({int sales, int salesReturns, int purchases, int purchaseReturns})?
+      _fyTotals;
   int _fy = Dt.fyStartYear(DateTime.now());
   List<int> _fyChoices = [Dt.fyStartYear(DateTime.now())];
   bool _loading = true;
@@ -46,7 +51,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
     final fyEnd = Dt.fyEndExclusive(_fy); // exclusive
 
     final udhaar = await Repo.instance.totalUdhaar();
-    final purchases = await Repo.instance.totalPurchases();
+    final purchasesAll = await Repo.instance.totalPurchases();
     final (mi, mo) = await Repo.instance.inOutForRange(
       monthStart.millisecondsSinceEpoch,
       monthEnd.millisecondsSinceEpoch,
@@ -55,11 +60,18 @@ class _AccountsScreenState extends State<AccountsScreen> {
       fyStart.millisecondsSinceEpoch,
       fyEnd.millisecondsSinceEpoch,
     );
+    final monthTotals = await Repo.instance.salesTotalsForRange(
+      monthStart.millisecondsSinceEpoch,
+      monthEnd.millisecondsSinceEpoch,
+    );
+    final fyTotals = await Repo.instance.salesTotalsForRange(
+      fyStart.millisecondsSinceEpoch,
+      fyEnd.millisecondsSinceEpoch,
+    );
     final first = await Repo.instance.firstTransactionMs();
 
     // FY choices: current FY at the top, going back only as far as the
-    // oldest year that actually holds data. With no old data (the app
-    // is new), only the current FY is listed.
+    // oldest year that actually holds data.
     final curFy = Dt.fyStartYear(now);
     final startFy =
         first > 0 ? Dt.fyStartYear(DateTime.fromMillisecondsSinceEpoch(first)) : curFy;
@@ -68,11 +80,13 @@ class _AccountsScreenState extends State<AccountsScreen> {
     if (!mounted) return;
     setState(() {
       _udhaar = udhaar;
-      _purchases = purchases;
+      _purchasesAll = purchasesAll;
       _inMonth = mi;
       _outMonth = mo;
       _inFy = fi;
       _outFy = fo;
+      _monthTotals = monthTotals;
+      _fyTotals = fyTotals;
       _fyChoices = choices;
       if (!choices.contains(_fy)) _fy = curFy;
       _loading = false;
@@ -83,7 +97,9 @@ class _AccountsScreenState extends State<AccountsScreen> {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     return Scaffold(
-      appBar: const RubyAppBar(title: 'Accounts (Hisab)', subtitle: 'Udhaar, purchases, aaya - gaya'),
+      appBar: const RubyAppBar(
+          title: 'Accounts (Hisab)',
+          subtitle: 'Sales, purchases, returns - everything in one place'),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: Ruby.ruby))
           : RefreshIndicator(
@@ -99,13 +115,21 @@ class _AccountsScreenState extends State<AccountsScreen> {
                   const SizedBox(height: 16),
                   SectionHeader('This Month - ${Dt.months[now.month - 1]} ${now.year}'),
                   const SizedBox(height: 6),
-                  _inOutCard(_inMonth, _outMonth),
+                  _periodCard(
+                    totals: _monthTotals,
+                    moneyIn: _inMonth,
+                    moneyOut: _outMonth,
+                  ),
                   const SizedBox(height: 16),
                   SectionHeader('Financial Year (April - March)'),
                   const SizedBox(height: 6),
                   _fySelector(),
                   const SizedBox(height: 8),
-                  _inOutCard(_inFy, _outFy),
+                  _periodCard(
+                    totals: _fyTotals,
+                    moneyIn: _inFy,
+                    moneyOut: _outFy,
+                  ),
                   const SizedBox(height: 8),
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 4),
@@ -145,7 +169,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
           ),
           const SizedBox(height: 2),
           const Text(
-            'All customers combined - opening balance + bills - payments',
+            'All customers - opening balance + bills - payments - sales returns',
             style: TextStyle(fontSize: 11.5, color: Color(0xFFF3B7BC)),
           ),
         ],
@@ -180,9 +204,9 @@ class _AccountsScreenState extends State<AccountsScreen> {
                         letterSpacing: 1.1,
                         color: Ruby.muted)),
                 const SizedBox(height: 3),
-                Text(Money.fmt(_purchases),
+                Text(Money.fmt(_purchasesAll),
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Ruby.ink)),
-                const Text('All time - every purchase invoice (maal kharida)',
+                const Text('All time - every purchase invoice with GST and parcel',
                     style: TextStyle(fontSize: 11, color: Ruby.faint)),
               ],
             ),
@@ -192,29 +216,95 @@ class _AccountsScreenState extends State<AccountsScreen> {
     );
   }
 
-  Widget _inOutCard(int moneyIn, int moneyOut) {
+  /// ONE card with every number of the period - nothing scattered:
+  ///   Sales / Sales returns / Purchases / Purchase returns
+  ///   Money in (payments) / Money out (purchases)
+  ///   NET = money in - money out (the one figure of the period)
+  Widget _periodCard({
+    required ({int sales, int salesReturns, int purchases, int purchaseReturns})?
+        totals,
+    required int moneyIn,
+    required int moneyOut,
+  }) {
+    final t = totals ??
+        (sales: 0, salesReturns: 0, purchases: 0, purchaseReturns: 0);
+    final net = moneyIn - moneyOut;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Ruby.line),
       ),
-      child: Row(
+      child: Column(
         children: [
-          Expanded(
-            child: _flow(Icons.south_west, 'MONEY IN', 'Payments received', moneyIn, Ruby.green),
+          _row('Sales (bills)', t.sales),
+          _row('Sales returns (credit)', -t.salesReturns,
+              green: t.salesReturns > 0),
+          _row('Purchases', t.purchases),
+          _row('Purchase returns (credit)', -t.purchaseReturns,
+              green: t.purchaseReturns > 0),
+          const Divider(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _flow(Icons.south_west, 'MONEY IN', moneyIn, Ruby.green),
+              ),
+              Container(width: 1, height: 38, color: Ruby.line),
+              Expanded(
+                child:
+                    _flow(Icons.north_east, 'MONEY OUT', moneyOut, Ruby.ruby),
+              ),
+            ],
           ),
-          Container(width: 1, height: 42, color: Ruby.line),
-          Expanded(
-            child: _flow(Icons.north_east, 'MONEY OUT', 'Purchase invoices', moneyOut, Ruby.ruby),
+          const Divider(height: 14),
+          Row(
+            children: [
+              const Expanded(
+                child: Text('NET (money in - money out)',
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        color: Ruby.ruby)),
+              ),
+              Text(
+                Money.fmt(net),
+                style: TextStyle(
+                  fontSize: 16.5,
+                  fontWeight: FontWeight.w800,
+                  color: net >= 0 ? Ruby.green : Ruby.ruby,
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _flow(IconData icon, String label, String sub, int paise, Color color) {
+  Widget _row(String label, int paise, {bool green = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label,
+                style: const TextStyle(fontSize: 12.5, color: Ruby.muted)),
+          ),
+          Text(
+            Money.fmt(paise),
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              color: green ? Ruby.green : Ruby.ink,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _flow(IconData icon, String label, int paise, Color color) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Row(
@@ -227,11 +317,16 @@ class _AccountsScreenState extends State<AccountsScreen> {
               children: [
                 Text(label,
                     style: TextStyle(
-                        fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.0, color: color)),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.0,
+                        color: color)),
                 const SizedBox(height: 3),
                 Text(Money.fmt(paise),
-                    style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800, color: Ruby.ink)),
-                Text(sub, style: const TextStyle(fontSize: 10.5, color: Ruby.faint)),
+                    style: const TextStyle(
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w800,
+                        color: Ruby.ink)),
               ],
             ),
           ),

@@ -12,7 +12,7 @@ import '../../data/repo.dart';
 import '../../models/models.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
-import 'suppliers_screen.dart';
+import 'supplier_picker_sheet.dart';
 import '../../services/bill_scan_service.dart';
 
 /// Purchase bill form (billing jaisa hi system): supplier party, party ka
@@ -152,19 +152,19 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
   void _addLine() {
     final name = _selected?.name ?? _nameC.text.trim();
     if (name.isEmpty) {
-      showSnack(context, 'Product name likhiye');
+      showSnack(context, 'Type the product name');
       _nameF.requestFocus();
       return;
     }
     final qty = double.tryParse(_qtyC.text.trim().replaceAll(',', '')) ?? 0;
     if (qty <= 0) {
-      showSnack(context, 'Quantity likhiye');
+      showSnack(context, 'Enter quantity');
       _qtyF.requestFocus();
       return;
     }
     final rate = Money.parsePaise(_rateC.text);
     if (rate <= 0) {
-      showSnack(context, 'Rate likhiye');
+      showSnack(context, 'Enter rate');
       _rateF.requestFocus();
       return;
     }
@@ -289,7 +289,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
   Future<void> _scanBill() async {
     if (_photoPath.isEmpty) {
       showSnack(context,
-          'Pehle bill ki photo lo (camera) ya gallery se choose karo');
+          'First take a photo of the bill (camera) or choose it from the gallery');
       return;
     }
     setState(() => _scanning = true);
@@ -299,7 +299,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
       if (!mounted) return;
       if (result == null) {
         showSnack(context,
-            'Scan se data nahi padha gaya - haath se daal do', error: true);
+            'Could not read the scan - enter the details manually', error: true);
         return;
       }
       setState(() {
@@ -315,12 +315,11 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
           _parcelC.text = Money.fmtRupeesInput(result.parcelPaise);
         }
       });
-      showSnack(context,
-          'Scan complete - ${result.lines.length} items mile, check karke save karo');
+      showSnack(context, 'Scan complete - ${result.lines.length} items found. Check them and save');
     } catch (e) {
       appLog('[purchase] scan failed: $e');
       if (mounted) {
-        showSnack(context, 'Scan fail hua - haath se daal do', error: true);
+        showSnack(context, 'Scan failed - enter the details manually', error: true);
       }
     } finally {
       if (mounted) setState(() => _scanning = false);
@@ -331,11 +330,12 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
 
   Future<void> _save() async {
     if (_lines.isEmpty) {
-      showSnack(context, 'Kam se kam 1 item add karo');
+      showSnack(context, 'Add at least 1 item');
       return;
     }
     if ((_supplier?.name ?? '').isEmpty && !_isEdit) {
-      showSnack(context, 'Purchase party choose karo (upar tap karo)');
+      showSnack(context, 'Select the purchase party first (tap the box above)',
+          error: true);
       return;
     }
     setState(() => _saving = true);
@@ -372,7 +372,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
     } catch (e) {
       appLog('[purchase] save failed: $e');
       if (mounted) {
-        showSnack(context, 'Save fail hua - dobara try karo', error: true);
+        showSnack(context, 'Save failed - please try again', error: true);
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -388,7 +388,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
         title: _isEdit
             ? 'Editing Purchase #${widget.editPurchase!.purchaseNo}'
             : 'New Purchase Bill',
-        subtitle: 'Maal aaya - kya aaya, kitna rate, kitna GST',
+        subtitle: 'Goods received - items, rates and GST',
       ),
       body: Column(
         children: [
@@ -404,7 +404,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
                       child: TextField(
                         controller: _partyBillC,
                         decoration: const InputDecoration(
-                          hintText: 'Party ka bill no.',
+                          hintText: 'Party bill no.',
                           isDense: true,
                         ),
                       ),
@@ -444,10 +444,10 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
                 if (_lines.isEmpty)
                   const EmptyState(
                     icon: Icons.inventory_outlined,
-                    title: 'Items add karo',
+                    title: 'Add items',
                     subtitle:
-                        'Jo maal aaya hai: naam, qty, rate aur uska GST%. '
-                        'Bill ki photo se auto-fill ke liye "SCAN BILL" dabao.',
+                        'What came in: name, qty, rate and its GST%. '
+                        'Tap SCAN BILL to auto-fill from the bill photo.',
                   )
                 else
                   ..._linesList(),
@@ -510,7 +510,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                name.isEmpty ? 'Purchase party choose karo (tap)' : name,
+                name.isEmpty ? 'Select purchase party (tap)' : name,
                 style: TextStyle(
                   fontWeight: FontWeight.w800,
                   fontSize: 14,
@@ -534,7 +534,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => const _SupplierPickerSheet(),
+      builder: (_) => const SupplierPickerSheet(title: 'Select purchase party'),
     );
     if (picked != null) {
       setState(() => _supplier = picked);
@@ -557,6 +557,9 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
               textEditingController: _nameC,
               focusNode: _nameF,
               displayStringForOption: (p) => p.name,
+              // Selecting a suggestion fills name + qty + rate at once
+              // (saved defaults), exactly like the billing screen.
+              onSelected: _selectProduct,
               optionsBuilder: (TextEditingValue value) =>
                   _options(value.text),
               optionsViewBuilder: (context, onSelected, options) {
@@ -846,7 +849,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
             child: exists
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(9),
-                    child: Image.file(file!, fit: BoxFit.cover),
+                    child: Image.file(file, fit: BoxFit.cover),
                   )
                 : const Icon(Icons.receipt_long_outlined,
                     color: Ruby.faint),
@@ -936,110 +939,6 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
                 _isEdit ? 'UPDATE PURCHASE BILL' : 'SAVE PURCHASE BILL',
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
-      ),
-    );
-  }
-}
-
-/// Search + pick a supplier (and add a brand-new party on the spot).
-class _SupplierPickerSheet extends StatefulWidget {
-  const _SupplierPickerSheet();
-
-  @override
-  State<_SupplierPickerSheet> createState() => _SupplierPickerSheetState();
-}
-
-class _SupplierPickerSheetState extends State<_SupplierPickerSheet> {
-  final _searchC = TextEditingController();
-  List<Map<String, Object?>> _rows = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _filter();
-  }
-
-  @override
-  void dispose() {
-    _searchC.dispose();
-    super.dispose();
-  }
-
-  Future<void> _filter() async {
-    final rows = await Repo.instance.searchSuppliers(_searchC.text);
-    if (!mounted) return;
-    setState(() => _rows = rows);
-  }
-
-  Future<void> _addNew() async {
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: Colors.white,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => const SupplierFormSheet(),
-    );
-    if (saved == true) _filter();
-  }
-
-  Future<void> _pick(Map<String, Object?> row) async {
-    final sup = await Repo.instance.getSupplier(row['id'] as String);
-    if (!mounted || sup == null) return;
-    Navigator.pop(context, sup);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Choose purchase party',
-              style: TextStyle(
-                  fontSize: 16.5,
-                  fontWeight: FontWeight.w800,
-                  color: Ruby.ink)),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _searchC,
-            autofocus: true,
-            onChanged: (_) => _filter(),
-            decoration: const InputDecoration(
-              hintText: 'Search party name, city...',
-              isDense: true,
-              prefixIcon: Icon(Icons.search),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _rows.length,
-              itemBuilder: (context, i) {
-                final r = _rows[i];
-                return ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.local_shipping_outlined,
-                      color: Ruby.ruby, size: 20),
-                  title: Text(r['name'] as String? ?? '',
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Text(r['city'] as String? ?? '',
-                      style: const TextStyle(fontSize: 11.5)),
-                  onTap: () => _pick(r),
-                );
-              },
-            ),
-          ),
-          OutlinedButton.icon(
-            onPressed: _addNew,
-            icon: const Icon(Icons.person_add_alt_1, size: 18),
-            label: const Text('NEW PARTY ADD KARO'),
-          ),
-        ],
       ),
     );
   }

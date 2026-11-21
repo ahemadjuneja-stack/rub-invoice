@@ -102,10 +102,11 @@ class _SupplierLedgerScreenState extends State<SupplierLedgerScreen> {
                   child: _entries.isEmpty
                       ? const EmptyState(
                           icon: Icons.book_outlined,
-                          title: 'Hisab khaali hai',
+                          title: 'Account is empty',
                           subtitle:
-                              'Is party se pehla purchase bill banaiye. Har maal, '
-                              'return aur payment isi account me dikhega.',
+                              'Make the first purchase bill for this party. Every '
+                              'goods delivery, '
+                              'return and payment shows in this one account.',
                         )
                       : ListView.separated(
                           padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
@@ -323,7 +324,7 @@ class _PaySupplierSheetState extends State<_PaySupplierSheet> {
   Future<void> _save() async {
     final amt = Money.parsePaise(_amountC.text);
     if (amt <= 0) {
-      showSnack(context, 'Amount likhiye', error: true);
+      showSnack(context, 'Enter the amount', error: true);
       return;
     }
     setState(() => _saving = true);

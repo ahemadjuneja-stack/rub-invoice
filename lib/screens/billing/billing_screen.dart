@@ -13,18 +13,21 @@ import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 import '../bills/dispatch_sheet.dart';
 
-/// Smart billing screen (Miracle-style):
-///  - TOTAL + SAVE pinned at the TOP - the amount and the save button
-///    never move, no matter how long the bill gets
-///  - added products show as slim numbered bordered lines (1, 2, 3, 4...)
-///    starting right under the total bar - the whole bill is visible at a
-///    glance, one line per product
-///  - the entry boxes (Product name | Qty | Price) sit at the BOTTOM,
-///    right above the keyboard, so filling/changing them is easy
+/// Smart billing screen (the classic, user-approved layout):
+///  - entry row at the TOP: [ Product name | Qty | Price ] - type and
+///    press Enter, the product becomes a new line below (Enter walks
+///    name -> qty -> price -> add -> name again, no touching needed)
+///  - added products show as slim numbered bordered strips (1, 2, 3...)
+///    exactly like the Miracle billing app: one thin line per product
 ///  - typing "S" suggests every product starting with S instantly
 ///  - selecting a product auto-fills saved Qty + Price, focus jumps to Qty
 ///  - numeric keyboard on qty/price, normal keyboard on product name
 ///  - totals are computed on integer paise: no rounding mistakes
+///
+/// Keyboard fix: when the keyboard closes, Android sometimes leaves the
+/// scroll position beyond the content (empty strip at the bottom, items
+/// stuck at the top). didChangeMetrics snaps the list back into place
+/// one frame after the window resizes back.
 class BillingScreen extends StatefulWidget {
   final Customer customer;
 
@@ -41,6 +44,10 @@ class BillingScreen extends StatefulWidget {
 
 class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserver {
   final _repo = Repo.instance;
+
+  /// Controls the cart list so the scroll position can be corrected
+  /// when the keyboard closes (the "stuck empty space" fix).
+  final ScrollController _cartScroll = ScrollController();
 
   /// True while editing an existing bill instead of making a new one.
   bool get _isEdit => widget.editBill != null;
@@ -122,8 +129,27 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
   }
 
   @override
+  void didChangeMetrics() {
+    // Keyboard opened or closed: wait one frame (the window has finished
+    // resizing), then (a) rebuild so nothing keeps a stale inset and
+    // (b) pull the cart list back inside its content - no empty space
+    // left behind, items return to the bottom.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {});
+      if (_cartScroll.hasClients) {
+        final pos = _cartScroll.position;
+        if (pos.pixels > pos.maxScrollExtent) {
+          pos.jumpTo(pos.maxScrollExtent.clamp(0.0, double.infinity));
+        }
+      }
+    });
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _cartScroll.dispose();
     // Auto-save whatever is in the cart so nothing is ever lost
     // (call, app switch, accidental back - the draft survives).
     unawaited(_persistDraft());
@@ -306,6 +332,10 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
   // ---------------- save ----------------
 
   Future<void> _save() async {
+    // Close the keyboard first: the saved sheet and the pop navigation
+    // must never fight with a live text field (also prevents the
+    // "stuck empty space" after the keyboard closes on some devices).
+    FocusScope.of(context).unfocus();
     if (_cart.isEmpty) {
       showSnack(context, 'Add at least one item');
       return;
@@ -482,25 +512,18 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
       body: Column(
         children: [
           _dateBar(),
-          // Bill amount + SAVE at the TOP (user request): the total and
-          // the save button live in one slim strip that never scrolls
-          // away, so a long bill can always be saved from the same spot.
-          _totalBar(),
+          _entryRow(),
           Expanded(
             child: _cart.isEmpty
                 ? const EmptyState(
                     icon: Icons.receipt_long_outlined,
                     title: 'Cart is empty',
                     subtitle:
-                        'Type a product name, qty and price in the boxes below. '
-                        'A saved name fills everything in. New product? Tap the '
-                        'inventory icon to save it for next time.',
+                        'Type a product name, qty and price. A saved name fills everything in. '
+                        'New product? Tap the inventory icon to save it for next time.',
                   )
                 : _cartList(),
           ),
-          // Entry boxes at the BOTTOM (user request): qty/price editing
-          // happens right above the keyboard where the thumbs are.
-          _entryRow(),
           _bottomBar(),
         ],
       ),
@@ -532,71 +555,6 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
           ));
       _persistDraft();
     }
-  }
-
-  /// Slim strip UNDER the date bar: [GRAND TOTAL/TOTAL UDHAR + items] on
-  /// the left, [SAVE & PRINT / PDF] on the right. Ruby red, one line -
-  /// the bill amount is always on top and saving always happens there.
-  Widget _totalBar() {
-    return Container(
-      color: Ruby.ruby,
-      padding: const EdgeInsets.fromLTRB(14, 7, 10, 7),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _payMode == 'jama' ? 'GRAND TOTAL' : 'TOTAL UDHAR',
-                  style: const TextStyle(
-                      fontSize: 9.5,
-                      letterSpacing: 1.4,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFFF3B7BC)),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  Money.fmt(_totalPaise),
-                  style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white),
-                ),
-                Text(
-                  'Items: ${_cart.length}',
-                  style: const TextStyle(
-                      fontSize: 10, color: Color(0xFFF3B7BC)),
-                ),
-              ],
-            ),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: Ruby.ruby,
-              minimumSize: const Size(132, 42),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-            ),
-            onPressed: _saving ? null : _save,
-            child: _saving
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Ruby.ruby))
-                : Text(
-                    _isEdit ? 'UPDATE BILL' : 'SAVE & PRINT / PDF',
-                    style: const TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.2),
-                  ),
-          ),
-        ],
-      ),
-    );
   }
 
   /// Slim tappable strip under the app bar: "Bill date  19 Nov 2026".
@@ -814,30 +772,19 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
             ),
           ),
           SizedBox(
-            width: 92,
-            child: Row(
-              children: [
-                Expanded(
-                  child: IconButton(
-                    onPressed: _savingProduct ? null : _saveProductToInventory,
-                    icon: _savingProduct
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Ruby.ruby),
-                          )
-                        : const Icon(Icons.inventory_2_outlined, color: Ruby.ink, size: 23),
-                    tooltip: 'Save this product to inventory',
-                  ),
-                ),
-                Expanded(
-                  child: IconButton(
-                    onPressed: _addToCart,
-                    icon: const Icon(Icons.add_circle, color: Ruby.ruby, size: 30),
-                    tooltip: 'Add to bill',
-                  ),
-                ),
-              ],
+            // Single inventory icon (the red + button is gone): a product
+            // is added to the bill by pressing Enter on the price box.
+            width: 46,
+            child: IconButton(
+              onPressed: _savingProduct ? null : _saveProductToInventory,
+              icon: _savingProduct
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Ruby.ruby),
+                    )
+                  : const Icon(Icons.inventory_2_outlined, color: Ruby.ink, size: 23),
+              tooltip: 'Save this product to inventory',
             ),
           ),
         ],
@@ -845,12 +792,12 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
     );
   }
 
-  /// Miracle-style cart: every product is ONE slim bordered line -
-  /// [1]  Product name      30 × ₹36      ₹1,080   [x]
-  /// Numbered 1-2-3-4 top to bottom, tight height (more products on
-  /// screen), tap a line to edit qty/price, [x] removes it.
+  /// Miracle-style cart: every product is ONE slim bordered strip
+  /// (number | name | qty x rate | amount | remove). Thin lines mean
+  /// the whole bill stays visible without scrolling.
   Widget _cartList() {
     return ListView.separated(
+      controller: _cartScroll,
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       itemCount: _cart.length,
       separatorBuilder: (_, __) => const SizedBox(height: 4),
@@ -860,8 +807,8 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
           borderRadius: BorderRadius.circular(8),
           onTap: () => _editLine(i),
           child: Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            height: 42,
+            padding: const EdgeInsets.symmetric(horizontal: 9),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(8),
@@ -872,11 +819,11 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                 Text(
                   '${i + 1}.',
                   style: const TextStyle(
-                      fontSize: 12.5,
+                      fontSize: 12,
                       fontWeight: FontWeight.w800,
                       color: Ruby.ruby),
                 ),
-                const SizedBox(width: 7),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     line.name,
@@ -889,29 +836,26 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                   ),
                 ),
                 Text(
-                  '${qtyText(line.qty)} × ${Money.fmt(line.ratePaise)}',
+                  '${qtyText(line.qty)} x ${Money.fmt(line.ratePaise, withSymbol: false)}',
                   style: const TextStyle(fontSize: 11.5, color: Ruby.muted),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 Text(
                   Money.fmt(line.amountPaise),
                   style: const TextStyle(
                       fontWeight: FontWeight.w800,
-                      fontSize: 13.5,
+                      fontSize: 13,
                       color: Ruby.ink),
                 ),
-                const SizedBox(width: 2),
-                SizedBox(
-                  width: 26,
-                  height: 26,
-                  child: IconButton(
-                    padding: EdgeInsets.zero,
-                    iconSize: 16,
-                    icon: const Icon(Icons.close, color: Ruby.faint),
-                    onPressed: () {
-                      setState(() => _cart.removeAt(i));
-                      _persistDraft();
-                    },
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    setState(() => _cart.removeAt(i));
+                    _persistDraft();
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 6),
+                    child: Icon(Icons.close, size: 16, color: Ruby.faint),
                   ),
                 ),
               ],
@@ -932,9 +876,8 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
         mainAxisSize: MainAxisSize.min,
         children: [
           // Payment mode toggle: Credit/Udhar vs Cash/Jama (one tap).
-          // (The total + SAVE button live in the slim bar at the TOP.)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Row(
               children: [
                 Expanded(
@@ -957,7 +900,7 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
           ),
           if (_payMode == 'jama')
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Row(
                 children: [
                   const Icon(Icons.currency_rupee, size: 18, color: Ruby.muted),
@@ -982,6 +925,48 @@ class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserv
                 ],
               ),
             ),
+          Container(
+            color: Ruby.ruby,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+            margin: const EdgeInsets.only(top: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _payMode == 'jama' ? 'GRAND TOTAL' : 'TOTAL UDHAR',
+                        style: const TextStyle(fontSize: 10, letterSpacing: 1.5, fontWeight: FontWeight.w800, color: Color(0xFFF3B7BC)),
+                      ),
+                      Text(
+                        Money.fmt(_totalPaise),
+                        style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800, color: Colors.white),
+                      ),
+                      Text(
+                        'Items: ${_cart.length}',
+                        style: const TextStyle(fontSize: 11, color: Color(0xFFF3B7BC)),
+                      ),
+                    ],
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Ruby.ruby,
+                    minimumSize: const Size(150, 48),
+                  ),
+                  onPressed: _saving ? null : _save,
+                  child: _saving
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Ruby.ruby))
+                      : Text(
+                          _isEdit ? 'UPDATE BILL' : 'SAVE & PRINT / PDF',
+                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.2),
+                        ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

@@ -509,14 +509,18 @@ class Repo {
   // ---------------- accounts (hisab) ----------------
 
   /// Net udhaar of ALL customers right now: opening balances + every
-  /// bill - every payment (soft-deleted rows excluded).
+  /// bill - every payment - every sales return (soft-deleted rows
+  /// excluded). Mirrors ledger() exactly, so the total on the Accounts
+  /// screen ALWAYS equals the sum of the customer ledgers - the hisab
+  /// can never disagree with itself.
   Future<int> totalUdhaar() async {
     final db = await _db;
     final r = await db.rawQuery('''
       SELECT
         (SELECT COALESCE(SUM(opening_balance_paise), 0) FROM customers WHERE is_deleted = 0) +
         (SELECT COALESCE(SUM(total_paise), 0) FROM bills WHERE is_deleted = 0) -
-        (SELECT COALESCE(SUM(amount_paise), 0) FROM payments WHERE is_deleted = 0)
+        (SELECT COALESCE(SUM(amount_paise), 0) FROM payments WHERE is_deleted = 0) -
+        (SELECT COALESCE(SUM(amount_paise), 0) FROM sales_returns WHERE is_deleted = 0)
         AS bal
     ''');
     return ((r.first['bal'] as num?) ?? 0).toInt();
@@ -529,6 +533,60 @@ class Repo {
       'SELECT COALESCE(SUM(amount_paise), 0) AS t FROM purchases WHERE is_deleted = 0',
     );
     return ((r.first['t'] as num?) ?? 0).toInt();
+  }
+
+  /// Purchase summary for the Purchase Menu: how much goods came in
+  /// (purchases incl. GST + parcel), how much went back (purchase
+  /// returns incl. GST), how much GST was paid and the parcel charges -
+  /// all time, one place (v0.3.1).
+  Future<({int purchased, int returned, int gst, int parcel})>
+      purchaseSummary() async {
+    final db = await _db;
+    final p = await db.rawQuery('''
+      SELECT COALESCE(SUM(subtotal_paise), 0) AS sub,
+             COALESCE(SUM(gst_total_paise), 0) AS gst,
+             COALESCE(SUM(parcel_paise), 0) AS parcel
+      FROM purchases WHERE is_deleted = 0
+    ''');
+    final rt = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount_paise + gst_total_paise), 0) AS t
+      FROM purchase_returns WHERE is_deleted = 0
+    ''');
+    final sub = ((p.first['sub'] as num?) ?? 0).toInt();
+    final gst = ((p.first['gst'] as num?) ?? 0).toInt();
+    final parcel = ((p.first['parcel'] as num?) ?? 0).toInt();
+    final returned = ((rt.first['t'] as num?) ?? 0).toInt();
+    return (
+      purchased: sub + gst + parcel,
+      returned: returned,
+      gst: gst,
+      parcel: parcel,
+    );
+  }
+
+  /// Sales / returns totals for the Accounts screen (one place, v0.3.1):
+  /// sales (bills), sales returns (credits), purchases (money out) and
+  /// purchase returns between [startMs, endMs) - end exclusive.
+  Future<({int sales, int salesReturns, int purchases, int purchaseReturns})>
+      salesTotalsForRange(int startMs, int endMs) async {
+    final db = await _db;
+    final r = await db.rawQuery('''
+      SELECT
+        (SELECT COALESCE(SUM(total_paise), 0) FROM bills
+          WHERE is_deleted = 0 AND bill_date >= ? AND bill_date < ?) AS sales,
+        (SELECT COALESCE(SUM(amount_paise), 0) FROM sales_returns
+          WHERE is_deleted = 0 AND return_date >= ? AND return_date < ?) AS sret,
+        (SELECT COALESCE(SUM(amount_paise), 0) FROM purchases
+          WHERE is_deleted = 0 AND purchase_date >= ? AND purchase_date < ?) AS pur,
+        (SELECT COALESCE(SUM(amount_paise), 0) FROM purchase_returns
+          WHERE is_deleted = 0 AND return_date >= ? AND return_date < ?) AS pret
+    ''', [startMs, endMs, startMs, endMs, startMs, endMs, startMs, endMs]);
+    return (
+      sales: ((r.first['sales'] as num?) ?? 0).toInt(),
+      salesReturns: ((r.first['sret'] as num?) ?? 0).toInt(),
+      purchases: ((r.first['pur'] as num?) ?? 0).toInt(),
+      purchaseReturns: ((r.first['pret'] as num?) ?? 0).toInt(),
+    );
   }
 
   /// Money IN (payments received) and money OUT (purchase invoices)

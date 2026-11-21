@@ -10,6 +10,7 @@ import '../../services/pdf_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
 import 'purchase_form_screen.dart';
+import 'purchase_menu_screen.dart';
 import 'suppliers_screen.dart';
 
 /// Purchase invoices (maal kharida): every supplier bill - what came,
@@ -231,7 +232,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              _sumRow('Subtotal (maal)', purchase.subtotalPaise),
+              _sumRow('Subtotal (goods)', purchase.subtotalPaise),
               _sumRow('GST total', purchase.gstTotalPaise),
               _sumRow('Parcel / transport', purchase.parcelPaise),
               _sumRow('GRAND TOTAL', purchase.amountPaise, bold: true),
@@ -295,8 +296,22 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
     return Scaffold(
       appBar: RubyAppBar(
         title: 'Purchase Invoices',
-        subtitle: 'Maal kharida - party wise hisab',
+        subtitle: 'Goods purchased - party-wise accounts',
         actions: [
+          // PURCHASE MENU (user request): one icon that opens the whole
+          // purchase section - new purchase, purchase return, goods
+          // summary and every party's contact / address / number.
+          IconButton(
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PurchaseMenuScreen()),
+              );
+              _reload();
+            },
+            icon: const Icon(Icons.menu_book_outlined),
+            tooltip: 'Purchase menu - returns, summary, parties',
+          ),
           IconButton(
             onPressed: () async {
               await Navigator.push(
@@ -306,7 +321,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
               _reload();
             },
             icon: const Icon(Icons.local_shipping_outlined),
-            tooltip: 'Purchase parties & hisab',
+            tooltip: 'Purchase parties & accounts',
           ),
         ],
       ),
@@ -323,11 +338,12 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
           : _items.isEmpty
               ? const EmptyState(
                   icon: Icons.local_shipping_outlined,
-                  title: 'Koi purchase nahi hui',
+                  title: 'No purchase invoice yet',
                   subtitle:
-                      'Surat / Mumbai / local agent se maal aaya? NEW PURCHASE '
-                      'dabao - items, rate, GST aur parcel ke saath poora bill '
-                      'banega. Party ka bill photo se AI-scan bhi ho sakta hai.',
+                      'Goods arrived from Surat, Mumbai or a local agent? Tap '
+                      'NEW PURCHASE - a full bill with items, rates, GST and '
+                      'parcel charges. The party\'s paper bill can also be '
+                      'photo-scanned to fill everything automatically.',
                 )
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(12, 10, 12, 90),
