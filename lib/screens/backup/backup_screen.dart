@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
+import '../../core/error_boundary.dart';
 import '../../services/backup_service.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/widgets.dart';
@@ -88,9 +89,14 @@ class _BackupScreenState extends State<BackupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: RubyAppBar(title: 'Backup & Restore'),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      // GOAL 2 (v0.4.1): Backup is isolated like Billing and Sync - a
+      // rendering bug here shows a retry card and can never take the
+      // billing home screen down (and vice versa).
+      body: ErrorBoundary(
+        module: 'Backup',
+        builder: (_) => ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
           _card(
             icon: Icons.ios_share,
             title: 'Export backup',
@@ -150,6 +156,7 @@ class _BackupScreenState extends State<BackupScreen> {
             ),
           ],
         ],
+        ),
       ),
     );
   }

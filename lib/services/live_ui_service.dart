@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui' show Color;
 
 import '../core/app_log.dart';
+import 'action_router.dart' show capList;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -62,13 +63,19 @@ class LiveUiConfig {
   });
 
   /// Cached config from any source. Missing keys = safe defaults, so a
-  /// half-written or old document can never break a phone.
+  /// half-written or old document can never break a phone. v0.4.1
+  /// hardening: EVERY field is type-checked (a wrong type falls back to
+  /// the default instead of throwing a cast error), and the shortcut
+  /// list is capped to 12 visible rows so a runaway config can never
+  /// flood the menu.
   factory LiveUiConfig.fromMap(Map<String, dynamic> d) {
     bool flag(String key, bool def) {
       final v = d[key];
       if (v is bool) return v;
       return def;
     }
+
+    String str(String key) => d[key] is String ? d[key] as String : '';
 
     final banner = (d['banner'] is Map) ? (d['banner'] as Map) : const {};
     final shortcuts = <LiveShortcut>[];
@@ -92,12 +99,14 @@ class LiveUiConfig {
       enableRazorpayBanner: flag('enable_razorpay_banner', false),
       enablePdfShare: flag('enable_pdf_share', true),
       bannerEnabled: (banner['enabled'] ?? false) == true,
-      bannerText: (banner['text'] ?? '') as String,
+      bannerText: banner['text'] is String
+          ? banner['text'] as String
+          : (banner['text']?.toString() ?? ''),
       bannerBg: parseHex(banner['bg']?.toString()),
       bannerFg: parseHex(banner['fg']?.toString()),
       primaryColor: parseHex(d['primary_color']?.toString()),
-      primaryLabel: (d['primary_label'] ?? '') as String,
-      shortcuts: shortcuts,
+      primaryLabel: str('primary_label'),
+      shortcuts: capList(shortcuts, max: 12),
     );
   }
 
@@ -209,7 +218,14 @@ class LiveUiService {
         .listen((doc) async {
       final data = doc.data();
       if (data == null) return;
-      config.value = LiveUiConfig.fromMap(data);
+      // A malformed document must never take the UI channel down: on a
+      // parse failure the last-known (or default) config stays active.
+      try {
+        config.value = LiveUiConfig.fromMap(data);
+      } catch (e) {
+        appLog('live ui config parse failed - keeping last known: $e');
+        return;
+      }
       try {
         final sp2 = await SharedPreferences.getInstance();
         await sp2.setString(_cacheKey, jsonEncode(data));

@@ -235,6 +235,60 @@ class Repo {
     return (rows.first['next'] as int?) ?? 1;
   }
 
+  // ------------- bill number collision heal (v0.4.1, GOAL 3) -------------
+
+  /// GOAL 3 (v0.4.1): two phones logged into the SAME shop can both
+  /// save "bill #12" while offline - MAX+1 is atomic per phone, not
+  /// across phones. After every sync pull this healer re-runs the
+  /// numbering deterministically: per duplicate group (same number,
+  /// different ids) the OLDEST row keeps the number and every other row
+  /// moves to the end (MAX+1, +2, ...) and is marked dirty, so the
+  /// renumber syncs back to the cloud and the other phone. Both phones
+  /// converge on the same result (oldest wins, id tiebreak) - no
+  /// ping-pong. Rows still dirty (unsynced local edits) are never
+  /// renumbered. Returns how many rows were renumbered.
+  Future<int> reconcileDuplicateNumbers() async {
+    final db = await _db;
+    var fixed = 0;
+    fixed += await _reconcileNumberTable(db, 'bills', 'bill_no');
+    fixed += await _reconcileNumberTable(db, 'purchases', 'purchase_no');
+    return fixed;
+  }
+
+  Future<int> _reconcileNumberTable(
+      Database db, String table, String noCol) async {
+    final all = await db.rawQuery(
+      'SELECT id, $noCol AS no, created_at, dirty FROM $table '
+      'ORDER BY created_at ASC, id ASC',
+    );
+    if (all.isEmpty) return 0;
+    // nextFloor = highest number ANY row holds (dirty rows included), so
+    // a renumbered row can never collide with an unsynced local bill.
+    var floor = 0;
+    final clean = <Map<String, Object?>>[];
+    for (final r in all) {
+      final no = (r['no'] as int?) ?? 0;
+      if (no > floor) floor = no;
+      if (((r['dirty'] as int?) ?? 0) == 0) {
+        clean.add(<String, Object?>{
+          'id': r['id'] as String,
+          'no': no,
+          'created_at': (r['created_at'] as int?) ?? 0,
+        });
+      }
+    }
+    final fixes = planDuplicateNumberFixes(clean, nextFloor: floor);
+    if (fixes.isEmpty) return 0;
+    final now = _now();
+    for (final f in fixes) {
+      await db.rawUpdate(
+        'UPDATE $table SET $noCol = ?, updated_at = ?, dirty = 1 WHERE id = ?',
+        [f.newNo, now, f.id],
+      );
+    }
+    return fixes.length;
+  }
+
   /// Saves a bill + its items atomically, records "received now" as a
   /// payment, and adjusts stock for tracked products. Exact math:
   /// each line amount = round(qty * ratePaise), total = sum of line amounts.
@@ -1634,4 +1688,63 @@ extension _ProductCopy on Product {
         isDeleted: isDeleted,
         dirty: 1,
       );
+}
+
+// ---------------------------------------------------------------------------
+// GOAL 3 (v0.4.1): bill/purchase number collision planner - PURE function,
+// unit-tested in test/bill_number_collision_test.dart.
+// ---------------------------------------------------------------------------
+
+/// One renumber instruction produced by [planDuplicateNumberFixes].
+class NumberFix {
+  final String id;
+  final int newNo;
+  const NumberFix(this.id, this.newNo);
+}
+
+/// Deterministic duplicate-number planner (offline multi-device fix).
+///
+/// Given rows shaped `{id, no, created_at}`:
+///  * rows are grouped by `no`; single-member groups are untouched;
+///  * inside a duplicate group the OLDEST row (created_at asc, id asc
+///    tiebreak) KEEPS the number - the one most likely already printed;
+///  * the remaining rows are renumbered in chronological order starting
+///    at max(nextFloor, max(all numbers)) + 1, +2, ...  Pass [nextFloor]
+///    as the highest number ANY row holds (dirty rows included) so a
+///    renumber can never collide with an unsynced local bill.
+///
+/// The result never renumbers the same row twice and re-running the
+/// planner on the fixed data returns an empty list (idempotent), so two
+/// devices converge on the same outcome instead of fighting.
+List<NumberFix> planDuplicateNumberFixes(List<Map<String, Object?>> rows,
+    {int nextFloor = 0}) {
+  int noOf(Map<String, Object?> r) => (r['no'] as num?)?.toInt() ?? 0;
+  int createdOf(Map<String, Object?> r) =>
+      (r['created_at'] as num?)?.toInt() ?? 0;
+
+  var maxNo = 0;
+  final groups = <int, List<Map<String, Object?>>>{};
+  for (final r in rows) {
+    final no = noOf(r);
+    if (no > maxNo) maxNo = no;
+    groups.putIfAbsent(no, () => []).add(r);
+  }
+
+  final fixes = <NumberFix>[];
+  final start = (nextFloor > maxNo ? nextFloor : maxNo) + 1;
+  var next = start;
+  for (final group in groups.entries) {
+    if (group.value.length < 2) continue;
+    final ordered = [...group.value]..sort((a, b) {
+        final ca = createdOf(a), cb = createdOf(b);
+        if (ca != cb) return ca.compareTo(cb);
+        return (a['id'] as String).compareTo(b['id'] as String);
+      });
+    // First (oldest) row keeps the number; the rest move to the end.
+    for (final loser in ordered.skip(1)) {
+      fixes.add(NumberFix(loser['id'] as String, next));
+      next++;
+    }
+  }
+  return fixes;
 }

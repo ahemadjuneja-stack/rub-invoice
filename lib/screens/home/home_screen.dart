@@ -10,6 +10,7 @@ import '../../core/theme.dart';
 import '../../core/error_boundary.dart';
 import '../../models/models.dart';
 import '../../data/repo.dart';
+import '../../services/action_router.dart';
 import '../../services/bill_draft_service.dart';
 import '../../services/live_ui_service.dart';
 import '../../services/package_info_helper.dart';
@@ -727,25 +728,57 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          _liveBanner(live),
-          _noticeBanner(rc),
-          _razorpayBanner(live),
-          _updateBanner(),
+          // GOAL 2 (v0.4.1): every home section sits in its OWN error
+          // boundary - a broken banner shows one small retry card while
+          // the bill list below keeps working (and vice versa).
+          ErrorBoundary(
+            module: 'Announcement banner',
+            compact: true,
+            builder: (_) => _liveBanner(live),
+          ),
+          ErrorBoundary(
+            module: 'Notice banner',
+            compact: true,
+            builder: (_) => _noticeBanner(rc),
+          ),
+          ErrorBoundary(
+            module: 'Offer banner',
+            compact: true,
+            builder: (_) => _razorpayBanner(live),
+          ),
+          ErrorBoundary(
+            module: 'Update banner',
+            compact: true,
+            builder: (_) => _updateBanner(),
+          ),
           if (_loadError != null) _loadErrorBanner(),
-          if (_draft != null) _draftBanner(_draft!),
-          for (final key in [today, yesterday]) ...[
-            SectionHeader(Dt.labelFor(key)),
-            if ((_bills[key] ?? []).isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  key == today ? 'No bills yet today. Tap + to make one.' : 'No bills yesterday.',
-                  style: const TextStyle(fontSize: 13, color: Ruby.muted),
-                ),
-              )
-            else
-              for (final bill in _bills[key]!) _billTile(bill),
-          ],
+          if (_draft != null)
+            ErrorBoundary(
+              module: 'Draft banner',
+              compact: true,
+              builder: (_) => _draftBanner(_draft!),
+            ),
+          ErrorBoundary(
+            module: 'Bill list',
+            builder: (_) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final key in [today, yesterday]) ...[
+                  SectionHeader(Dt.labelFor(key)),
+                  if ((_bills[key] ?? []).isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        key == today ? 'No bills yet today. Tap + to make one.' : 'No bills yesterday.',
+                        style: const TextStyle(fontSize: 13, color: Ruby.muted),
+                      ),
+                    )
+                  else
+                    for (final bill in _bills[key]!) _billTile(bill),
+                ],
+              ],
+            ),
+          ),
           const SizedBox(height: 24),
         ],
       ),
@@ -1064,23 +1097,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // GOAL 2 (v0.4.1): shortcuts and the fixed menu tiles are
+        // separately isolated - a bad admin shortcut config can never
+        // take the main menu down.
         if (live.shortcuts.isNotEmpty) ...[
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 1.5,
-            children: [
-              for (final s in live.shortcuts)
-                _menuCard(
-                  _shortcutIcon(s.icon),
-                  s.label,
-                  () => _runShortcut(s),
-                  iconColor: s.color,
-                ),
-            ],
+          ErrorBoundary(
+            module: 'Shortcut cards',
+            compact: true,
+            builder: (_) => GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1.5,
+              children: [
+                for (final s in live.shortcuts)
+                  _menuCard(
+                    _shortcutIcon(s.icon),
+                    s.label,
+                    () => _runShortcut(s),
+                    iconColor: s.color,
+                  ),
+              ],
+            ),
           ),
           const Padding(
             padding: EdgeInsets.fromLTRB(4, 14, 4, 0),
@@ -1091,14 +1131,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           const SizedBox(height: 10),
         ],
-        GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 1.5,
-          children: [
+        ErrorBoundary(
+          module: 'Menu tiles',
+          builder: (_) => GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.5,
+            children: [
             _menuCard(Icons.people_alt_outlined, 'Customers', () {
               Navigator.push(
                 context,
@@ -1135,6 +1177,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const AppSettingsScreen()));
             }),
           ],
+          ),
         ),
         const Padding(
           padding: EdgeInsets.fromLTRB(4, 14, 4, 0),
@@ -1231,67 +1274,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return map[name.trim().toLowerCase()] ?? Icons.link_outlined;
   }
 
-  /// Admin-defined actions. Formats:
+  /// Admin-defined actions - STRICT WHITELIST (v0.4.1):
   ///   open:billing | open:customers | open:ledger | open:inventory
   ///   open:purchases | open:returns | open:accounts | open:backup
   ///   open:sync | open:settings | open:pdfformat
   ///   url:https://...   (browser / WhatsApp link)
   ///   dial:+919876543210
   ///   none              (announcement-only card)
+  /// Everything outside the whitelist is parsed to IgnoredRoute and
+  /// silently ignored - a tampered config can never open anything else.
   Future<void> _runShortcut(LiveShortcut s) async {
     final action = s.action.trim();
     try {
-      if (action.startsWith('open:')) {
-        switch (action.substring(5).trim().toLowerCase()) {
-          case 'billing':
-            setState(() => _tab = 0);
-            return;
-          case 'customers':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)));
-            return;
-          case 'ledger':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)));
-            return;
-          case 'inventory':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const InventoryScreen()));
-            return;
-          case 'purchases':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseScreen()));
-            return;
-          case 'returns':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesReturnScreen()));
-            return;
-          case 'accounts':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()));
-            return;
-          case 'backup':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()));
-            return;
-          case 'sync':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const SyncStatusScreen()));
-            return;
-          case 'settings':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const AppSettingsScreen()));
-            return;
-          case 'pdfformat':
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-            return;
-        }
-        return;
-      }
-      if (action.startsWith('url:')) {
-        final url = action.substring(4).trim();
-        if (url.startsWith('http')) {
+      switch (ActionRouter.parse(action)) {
+        case OpenScreenRoute(:final screen):
+          switch (screen) {
+            case 'billing':
+              setState(() => _tab = 0);
+              return;
+            case 'customers':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)));
+              return;
+            case 'ledger':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerSearchScreen(mode: CustomerSearchMode.browse)));
+              return;
+            case 'inventory':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const InventoryScreen()));
+              return;
+            case 'purchases':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseScreen()));
+              return;
+            case 'returns':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesReturnScreen()));
+              return;
+            case 'accounts':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()));
+              return;
+            case 'backup':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const BackupScreen()));
+              return;
+            case 'sync':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const SyncStatusScreen()));
+              return;
+            case 'settings':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const AppSettingsScreen()));
+              return;
+            case 'pdfformat':
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+              return;
+          }
+          return;
+        case UrlRoute(:final url):
           await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-        }
-        return;
-      }
-      if (action.startsWith('dial:')) {
-        final tel = action.substring(5).trim();
-        if (tel.isNotEmpty) {
-          await launchUrl(Uri(scheme: 'tel', path: tel));
-        }
-        return;
+          return;
+        case DialRoute(:final number):
+          await launchUrl(Uri(scheme: 'tel', path: number));
+          return;
+        case IgnoredRoute():
+          // Not on the whitelist - ignore silently (spec: baaki ignore).
+          return;
       }
     } catch (e) {
       // A broken admin link shows a snack, never a crash.

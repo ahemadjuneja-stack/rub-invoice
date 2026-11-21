@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/theme.dart';
+import '../../core/error_boundary.dart';
 import '../../data/repo.dart';
 import '../../models/models.dart';
 import '../../services/live_ui_service.dart';
@@ -307,96 +308,117 @@ class _DispatchSheetState extends State<_DispatchSheet> {
               if (LiveUiService.instance.config.value.enableBiltyUpload &&
                   (_mode == 'transport' || _billtyPath.isNotEmpty)) ...[
                 const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Ruby.line),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Row(
-                        children: [
-                          Icon(Icons.receipt_long_outlined, size: 15, color: Ruby.ruby),
-                          SizedBox(width: 6),
-                          Text(
-                            'BILLTY (LORRY RECEIPT) PHOTO',
-                            style: TextStyle(fontSize: 10.5, letterSpacing: 1, fontWeight: FontWeight.w800, color: Ruby.muted),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      if (_billtyPath.isEmpty)
-                        Row(
+                // GOAL 2 (v0.4.1): the billty camera module is isolated -
+                // if photo loading/rendering ever breaks, ONLY this card
+                // shows a retry; the delivery sheet keeps working.
+                ErrorBoundary(
+                  module: 'Billty photo',
+                  builder: (_) => Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Ruby.line),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
                           children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                icon: const Icon(Icons.photo_camera_outlined, size: 18),
-                                label: const Text('TAKE PHOTO', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
-                                onPressed: () => _pick(ImageSource.camera),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                icon: const Icon(Icons.photo_outlined, size: 18),
-                                label: const Text('GALLERY', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
-                                onPressed: () => _pick(ImageSource.gallery),
-                              ),
-                            ),
-                          ],
-                        )
-                      else
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            GestureDetector(
-                              onTap: () => showPhotoFullscreen(context, _billtyPath),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.file(
-                                  File(_billtyPath),
-                                  width: 64,
-                                  height: 64,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    width: 64,
-                                    height: 64,
-                                    color: Ruby.fieldBg,
-                                    child: const Icon(Icons.broken_image_outlined, size: 20, color: Ruby.faint),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'Billty photo added',
-                                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Ruby.ink),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    'Tap to view - deletes automatically after 45 days',
-                                    style: const TextStyle(fontSize: 11, color: Ruby.faint),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Remove photo',
-                              icon: const Icon(Icons.delete_outline, size: 20, color: Ruby.muted),
-                              onPressed: () => setState(() {
-                                _billtyPath = '';
-                                _photoChanged = true;
-                              }),
+                            Icon(Icons.receipt_long_outlined, size: 15, color: Ruby.ruby),
+                            SizedBox(width: 6),
+                            Text(
+                              'BILLTY (LORRY RECEIPT) PHOTO',
+                              style: TextStyle(fontSize: 10.5, letterSpacing: 1, fontWeight: FontWeight.w800, color: Ruby.muted),
                             ),
                           ],
                         ),
-                    ],
+                        const SizedBox(height: 10),
+                        if (_billtyPath.isEmpty) ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                                  label: const Text('TAKE PHOTO', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
+                                  onPressed: () => _pick(ImageSource.camera),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.photo_outlined, size: 18),
+                                  label: const Text('GALLERY', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
+                                  onPressed: () => _pick(ImageSource.gallery),
+                                ),
+                              ),
+                            ],
+                          ),
+                          // GOAL 3 (v0.4.1): retention warning BEFORE capture
+                          // too (the added-photo state already says it).
+                          const SizedBox(height: 8),
+                          const Row(
+                            children: [
+                              Icon(Icons.schedule_outlined, size: 12, color: Ruby.faint),
+                              SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  'Proof photos are kept 45 days, then auto-deleted.',
+                                  style: TextStyle(fontSize: 10.5, color: Ruby.faint),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ] else
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              GestureDetector(
+                                onTap: () => showPhotoFullscreen(context, _billtyPath),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(
+                                    File(_billtyPath),
+                                    width: 64,
+                                    height: 64,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      width: 64,
+                                      height: 64,
+                                      color: Ruby.fieldBg,
+                                      child: const Icon(Icons.broken_image_outlined, size: 20, color: Ruby.faint),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Billty photo added',
+                                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Ruby.ink),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Tap to view - deletes automatically after 45 days',
+                                      style: const TextStyle(fontSize: 11, color: Ruby.faint),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Remove photo',
+                                icon: const Icon(Icons.delete_outline, size: 20, color: Ruby.muted),
+                                onPressed: () => setState(() {
+                                  _billtyPath = '';
+                                  _photoChanged = true;
+                                }),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ],

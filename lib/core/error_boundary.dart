@@ -1,5 +1,6 @@
 import 'app_log.dart';
 
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,6 +31,30 @@ class RubyErrorGuard {
 
   /// Whether install() has already run (idempotent).
   static bool _installed = false;
+
+  /// GOAL 3 (v0.4.1): pluggable crash reporter. main.dart wires this to
+  /// Firebase Crashlytics the moment Firebase.initializeApp succeeds
+  /// (boot OR background recovery). Debug builds keep it null - the
+  /// local crash log works everywhere, the cloud reporter only ships in
+  /// release. Every call is swallowed so a reporter bug can never crash
+  /// the app (GOAL 2).
+  static void Function(String source, Object error, StackTrace? stack)?
+      reporter;
+
+  /// Enable Crashlytics forwarding (release builds). Safe to call
+  /// multiple times and safe when Firebase init failed.
+  static void enableCrashlytics() {
+    reporter = (source, error, stack) {
+      try {
+        FirebaseCrashlytics.instance
+          ..setCrashlyticsCollectionEnabled(true)
+          ..recordError(error, stack, information: ['ruby_source: $source']);
+      } catch (_) {
+        // Crashlytics not ready (offline boot, init failure) - the
+        // local crash log already has the entry.
+      }
+    };
+  }
 
   static void install() {
     if (_installed) return;
@@ -62,9 +87,14 @@ class RubyErrorGuard {
   }
 
   /// Append one crash line to the local ring buffer (never throws).
+  /// v0.4.1: also forwards to the cloud reporter (Crashlytics) when
+  /// enableCrashlytics() was called - failures there are ignored.
   static Future<void> logCrash(
       String source, Object error, StackTrace? stack) async {
     appLog('[$source] crash: $error');
+    try {
+      reporter?.call(source, error, stack);
+    } catch (_) {}
     try {
       final sp = await SharedPreferences.getInstance();
       final raw = sp.getStringList(_logKey) ?? const <String>[];

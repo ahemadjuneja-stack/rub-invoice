@@ -106,6 +106,17 @@ class SyncService {
       final db = await DB.open();
       await _pushAll(db);
       await _pullAll(db);
+      // GOAL 3 (v0.4.1): two phones can save the SAME bill/purchase
+      // number while offline (MAX+1 is per-phone). After the pull,
+      // heal duplicate numbers deterministically (oldest keeps the
+      // number) and push the renumbered rows back right away so the
+      // other phone converges on the next pull. Idempotent: a second
+      // pass finds no duplicates and changes nothing.
+      final renumbered = await Repo.instance.reconcileDuplicateNumbers();
+      if (renumbered > 0) {
+        appLog('[sync] renumbered $renumbered duplicate bill/purchase numbers');
+        await _pushAll(db);
+      }
       // Photos (billty / payment proof / purchase bill) are FILES, not
       // rows - they travel through Firebase Storage, compressed to
       // <= 300 KB client-side. Best-effort: a photo failure never

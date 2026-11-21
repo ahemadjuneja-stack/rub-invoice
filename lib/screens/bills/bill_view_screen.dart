@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
+import '../../core/error_boundary.dart';
 import '../../models/models.dart';
 import '../../data/repo.dart';
 import '../../services/live_ui_service.dart';
@@ -84,16 +85,29 @@ class _BillViewScreenState extends State<BillViewScreen> {
     try {
       paidOnBill = await Repo.instance.paidWithBill(_bill!.id);
     } catch (_) {}
-    await PdfService.instance.shareBill(
-      bill: _bill!,
-      items: _items,
-      shop: _shop,
-      customerCity: _city,
-      customerShop: _cust?.shopName ?? '',
-      customerPhone: _phone,
-      balanceAfterPaise: _balanceAfter,
-      isCashMemo: paidOnBill >= _bill!.totalPaise,
-    );
+    // GOAL 2 (v0.4.1): the PDF module is isolated - a failed PDF build
+    // or share intent shows a snack and lands in the crash log; the
+    // bill screen keeps working (GOAL 2: PDF must never take billing
+    // or sync down).
+    try {
+      await PdfService.instance.shareBill(
+        bill: _bill!,
+        items: _items,
+        shop: _shop,
+        customerCity: _city,
+        customerShop: _cust?.shopName ?? '',
+        customerPhone: _phone,
+        balanceAfterPaise: _balanceAfter,
+        isCashMemo: paidOnBill >= _bill!.totalPaise,
+      );
+    } catch (e, s) {
+      await RubyErrorGuard.logCrash('pdf_share', e, s);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not share the PDF. Your bill is saved safely.')),
+        );
+      }
+    }
   }
 
   Future<void> _delete() async {
@@ -152,7 +166,9 @@ class _BillViewScreenState extends State<BillViewScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: Ruby.ruby))
-          : ListView(
+          : ErrorBoundary(
+              module: 'Bill view',
+              builder: (_) => ListView(
               children: [
                 Container(
                   margin: const EdgeInsets.all(12),
@@ -244,6 +260,7 @@ class _BillViewScreenState extends State<BillViewScreen> {
                 ),
               ],
             ),
+          ),
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),

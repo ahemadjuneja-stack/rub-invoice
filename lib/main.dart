@@ -79,6 +79,10 @@ Future<void> main() async {
       // working with zero network (spec: persistenceEnabled: true).
       FirebaseFirestore.instance.settings =
           const Settings(persistenceEnabled: true);
+      // GOAL 3 (v0.4.1): Crashlytics forwarding (release only - debug
+      // builds keep the local crash log only). Safe even if the
+      // Crashlytics SDK is not ready: the reporter swallows everything.
+      if (!kDebugMode) RubyErrorGuard.enableCrashlytics();
       fbReady = true;
       // SECURITY (v0.2.21): Firebase App Check - Play Integrity in
       // release, debug provider in dev builds. Activation is readiness
@@ -144,6 +148,7 @@ Future<void> _recoverFirebaseInBackground() async {
       await SyncService.instance.configure(fbReady: true);
       await RemoteConfigService.instance.init(fbReady: true);
       await LiveUiService.instance.init(fbReady: true);
+      if (!kDebugMode) RubyErrorGuard.enableCrashlytics();
       unawaited(_activateAppCheck());
       appLog('Firebase recovered in background - login + sync live');
       return;

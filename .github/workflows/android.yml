@@ -15,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the interim signing fallback reads the keystore
+          # binary from the pre-removal commit until the owner sets the
+          # ANDROID_* GitHub Secrets (GOAL 3 - see docs/SECURITY.md).
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:
@@ -42,6 +47,37 @@ jobs:
 
       - name: Install dependencies
         run: flutter pub get
+
+      # GOAL 3 (v0.4.1): the release keystore is NOT in the repo anymore.
+      # Preferred: the 4 GitHub Actions Secrets. Interim (secrets not set
+      # yet): restore the SAME keystore binary + values from git history
+      # so current installs keep receiving update-compatible APKs.
+      # The password was already public in old commits - rotating the
+      # key after the secrets are set is documented in docs/SECURITY.md.
+      - name: Restore signing keystore (secrets, else history fallback)
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/ruby-invoice.keystore
+            {
+              echo "storeFile=ruby-invoice.keystore"
+              echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+              echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}"
+              echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}"
+            } > android/key.properties
+            echo "Signing with the keystore from GitHub Secrets."
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set - using the interim history fallback (see docs/SECURITY.md)."
+            OLD_GRADLE_SHA=$(git log --format='%H %s' -- android/app/build.gradle.kts | grep -m1 'v0.4.0 CI fix' | cut -d' ' -f1)
+            git show "${OLD_GRADLE_SHA}:android/app/build.gradle.kts" | grep -oE '(storePassword|keyPassword|keyAlias) = "[^"]+"' | sed 's/.*= "\([^"]*\)"/\1/' > /tmp/sign_vals.txt
+            git show "${OLD_GRADLE_SHA}:android/app/ruby-invoice.keystore" > android/app/ruby-invoice.keystore
+            {
+              echo "storeFile=ruby-invoice.keystore"
+              echo "storePassword=$(sed -n 1p /tmp/sign_vals.txt)"
+              echo "keyAlias=$(sed -n 2p /tmp/sign_vals.txt)"
+              echo "keyPassword=$(sed -n 3p /tmp/sign_vals.txt)"
+            } > android/key.properties
+            echo "Interim: keystore restored from git history ($OLD_GRADLE_SHA)."
+          fi
 
       - name: Analyze
         run: |
@@ -148,6 +184,17 @@ jobs:
         with:
           name: ruby-invoice-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+
+      # GOAL 3 (v0.4.1): archive the R8 mapping.txt with every build so
+      # obfuscated Java/Kotlin stack traces from Crashlytics can be
+      # re-traced later. warn-only: a config change must never break CI.
+      - name: Upload R8 mapping.txt artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapping-txt
+          path: build/app/outputs/mapping/**/mapping.txt
+          if-no-files-found: warn
 
       - name: Publish GitHub Release (on v* tag)
         if: startsWith(github.ref, 'refs/tags/')

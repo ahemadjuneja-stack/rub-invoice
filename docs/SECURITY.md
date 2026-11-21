@@ -103,3 +103,49 @@ of signing in). Binding the device identity into the token itself
 requires custom claims minted by a server (the Razorpay function is the
 future home for that). App Check + the rules above close the
 script/bot/replay surface meanwhile.
+
+## 8. Signing keys are NOT in the repo (v0.4.1)
+
+`android/app/ruby-invoice.keystore` and the hard-coded
+`storePassword/keyPassword` were REMOVED from the repository
+(`git rm --cached`; `.gitignore` covers `*.keystore`, `*.jks`,
+`android/key.properties`).
+
+How signing works now:
+
+* **Locally** - keep `android/app/ruby-invoice.keystore` on disk (it is
+  untracked) and `android/key.properties` (gitignored) with:
+  `storeFile / storePassword / keyAlias / keyPassword`.
+* **CI** - the workflow restores the keystore from GitHub Actions
+  Secrets before `flutter build apk`:
+  | Secret | Value |
+  |---|---|
+  | `ANDROID_KEYSTORE_BASE64` | `base64 -w0 ruby-invoice.keystore` output |
+  | `ANDROID_KEYSTORE_PASSWORD` | keystore password |
+  | `ANDROID_KEY_ALIAS` | `ruby_invoice` |
+  | `ANDROID_KEY_PASSWORD` | key password |
+* **Interim fallback** - until the secrets are set once, CI extracts
+  the same keystore + values from git history (commit `9454a36`) so
+  every APK stays update-compatible with current installs. The workflow
+  prints a warning while this fallback is active.
+
+### Owner actions (one time, ~3 minutes)
+
+1. `base64 -w0 android/app/ruby-invoice.keystore` -> paste into
+   Settings -> Secrets and variables -> Actions as
+   `ANDROID_KEYSTORE_BASE64`; add the other three secrets.
+2. Push any commit -> confirm the build log says
+   "Signing with the keystore from GitHub Secrets".
+3. **Rotate the key later** (recommended, plan it): the old password
+   was public in git history, so the safest endgame is a NEW keystore +
+   a versioned migration note (users reinstall once - data returns
+   from cloud sync + JSON backup). History rewriting
+   (`git filter-repo`) is optional and breaks the interim fallback.
+
+### mapping.txt
+
+R8 obfuscates the Java/Kotlin glue; every CI build archives
+`build/app/outputs/mapping/**/mapping.txt` as the `mapping-txt`
+artifact. Keep it for every release: Crashlytics uses it to de-obfuscate
+native stack traces. (Flutter Dart errors carry readable Dart symbols -
+no mapping needed there.)

@@ -117,6 +117,42 @@ void main() {
     });
   });
 
+  group('LiveUiConfig v0.4.1 hardening - corrupt config never breaks the app', () {
+    test('wrong types everywhere fall back to safe defaults (no throw)', () {
+      final c = LiveUiConfig.fromMap(const {
+        'banner': 'not-a-map', // banner should be a map
+        'primary_label': 12345, // should be a string
+        'shortcuts': {'a': 'b'}, // should be a list
+        'maintenance_mode': 'yes', // should be a bool
+      });
+      expect(c.bannerEnabled, isFalse);
+      expect(c.bannerText, '');
+      expect(c.primaryLabel, '');
+      expect(c.shortcuts, isEmpty);
+      expect(c.maintenanceMode, isFalse);
+    });
+
+    test('shortcuts are capped at 12 visible rows', () {
+      final many = List.generate(30, (i) => {
+            'id': 'sc_$i',
+            'label': 'Row $i',
+            'action': 'open:billing',
+            'visible': true,
+          });
+      final c = LiveUiConfig.fromMap({'shortcuts': many});
+      expect(c.shortcuts, hasLength(12));
+    });
+
+    test('banner text as a number does not crash the parser', () {
+      final c = LiveUiConfig.fromMap(const {
+        'banner': {'enabled': true, 'text': 99, 'bg': '#9B111E'},
+      });
+      expect(c.bannerEnabled, isTrue);
+      expect(c.bannerText, '99');
+      expect(c.bannerBg, const Color(0xFF9B111E));
+    });
+  });
+
   group('parseHex', () {
     test('accepts 6 and 3-pair forms, rejects the rest', () {
       expect(parseHex('#9B111E'), const Color(0xFF9B111E));

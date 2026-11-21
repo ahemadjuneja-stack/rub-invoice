@@ -120,3 +120,56 @@ Rules: `match /app_config/{docId}` - public read (no private data),
 admin write only (same trust level as `config/{docId}`). A malformed
 row, unknown icon or broken link can never break the app - the parser
 skips bad rows and unknown actions fall back safely.
+
+## v0.4.1: Ship a NEW feature behind a flag (step by step)
+
+The golden rule: **a brand-new feature ships with its flag defaulting
+to OFF in the app, and you turn it ON from Ruby Key when you are
+ready.** Users get it without any update; if something breaks you turn
+it OFF the same way. `enable_razorpay_banner` is the live example
+(default false, hidden until you switch it on).
+
+Adding a new toggle (example: a "Pricelist" screen):
+
+1. **App side** - add the field to `LiveUiConfig` in
+   `lib/services/live_ui_service.dart`:
+   - a `final bool enablePricelist;` field,
+   - a constructor default `this.enablePricelist = false,` (OFF!),
+   - in `fromMap`: `enablePricelist: flag('enable_pricelist', false)`,
+   - in `toMap`: `'enable_pricelist': enablePricelist,`.
+2. **Gate the UI** - wrap the new button/screen with the flag:
+   `if (LiveUiService.instance.config.value.enablePricelist) ...`
+   (see `home_screen.dart` line ~792 for the razorpay banner example).
+   Put the section inside an `ErrorBoundary(module: 'Pricelist', ...)`
+   so it can never take the tab down (see lib/core/error_boundary.dart).
+3. **Test** - extend `test/live_ui_config_test.dart`: default OFF, ON
+   parses, wrong type falls back to OFF.
+4. **Ship the APK once.** Users get the code, the feature stays
+   hidden because the flag defaults to OFF.
+5. **Ruby Key side** - add a switch in `ruby-key-admin/app.js` inside
+   the LIVE UI CONTROL card (copy the `luBilty` switch block; write
+   `enable_pricelist: <bool>` into the `setDoc` map).
+6. **Turn it ON** - open Ruby Key -> LIVE UI CONTROL -> toggle ->
+   Save. Every phone applies it within seconds (offline phones on
+   next start, from the `live_ui_cache_v1` cache).
+
+### Add a new shortcut button / section (no app release at all)
+
+No code needed for a LINK-style button:
+
+1. Ruby Key -> LIVE UI CONTROL -> Shortcuts -> add row:
+   `label` (visible text), `icon` (one name from the icon map:
+   bill/customer/ledger/inventory/purchase/return/account/report/
+   backup/sync/settings/whatsapp/phone/call/offer/star/gift/link/
+   share/shop), `color` (hex like `#9B111E`), `action`:
+   - `open:billing|customers|ledger|inventory|purchases|returns|
+     accounts|backup|sync|settings|pdfformat` (in-app screen), or
+   - `url:https://...` (browser / WhatsApp link), or
+   - `dial:+919876543210` (call), or
+   - `none` (announcement-only card).
+2. Save. The card appears on the Menu tab of every phone within
+   seconds.
+
+Anything outside these action formats is rejected by the app's action
+router whitelist (lib/services/action_router.dart) - a bad action is
+ignored, never executed.

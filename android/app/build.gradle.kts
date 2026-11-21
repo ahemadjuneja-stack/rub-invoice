@@ -32,21 +32,50 @@ android {
         versionName = flutter.versionName
     }
 
+    // GOAL 3 (v0.4.1) - SECRETS OUT OF THE REPO.
+    //
+    // The release keystore is NO LONGER committed. Signing values come
+    // from android/key.properties (gitignored), which is:
+    //   * written locally by the developer (keep ruby-invoice.keystore
+    //     on disk, never git add it), and
+    //   * restored inside CI by the workflow from GitHub Actions
+    //     Secrets (ANDROID_KEYSTORE_BASE64 / _PASSWORD / _ALIAS /
+    //     _KEY_PASSWORD) - see docs/SECURITY.md.
+    // If key.properties is missing (fresh clone without secrets), the
+    // build falls back to the plain DEBUG key and prints a LOUD
+    // warning: such an APK installs fresh but CANNOT update an
+    // existing signed install - do not distribute it.
+    val keyProps = java.util.Properties().apply {
+        val f = rootProject.file("key.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val ksFile = (keyProps.getProperty("storeFile"))?.let { file(it) }
+    val hasReleaseKey = ksFile != null && ksFile.exists() &&
+        keyProps.getProperty("storePassword") != null
+
     signingConfigs {
-        // Shared keystore (committed) so CI and local builds use the same
-        // signing key - required for stable Firebase phone auth fingerprints.
-        getByName("debug") {
-            storeFile = file("ruby-invoice.keystore")
-            storePassword = "rubyinvoice"
-            keyAlias = "ruby_invoice"
-            keyPassword = "rubyinvoice"
+        if (hasReleaseKey) {
+            create("rubyRelease") {
+                storeFile = ksFile
+                storePassword = keyProps.getProperty("storePassword")
+                keyAlias = keyProps.getProperty("keyAlias")
+                keyPassword = keyProps.getProperty("keyPassword")
+            }
         }
     }
 
     buildTypes {
         release {
-            // Signs releases with the shared keystore above.
-            signingConfig = signingConfigs.getByName("debug")
+            if (hasReleaseKey) {
+                signingConfig = signingConfigs.getByName("rubyRelease")
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
+                println(
+                    "WARNING: android/key.properties (release keystore) is missing - " +
+                    "this APK is DEBUG-SIGNED and cannot update existing installs. " +
+                    "Restore key.properties locally or set the ANDROID_* CI secrets."
+                )
+            }
             // SECURITY HARDENING (v0.2.21): R8 code shrinking + resource
             // shrinking + obfuscation. The Java/Kotlin glue (Firebase
             // auth, Google Sign-In, sqflite bridge) is stripped and
