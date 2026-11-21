@@ -63,7 +63,11 @@ jobs:
       - name: Restore rotated signing keystore (secrets only)
         run: |
           if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
-            echo "::error::ANDROID_KEYSTORE_BASE64 secret is NOT set. The history fallback was removed in v0.4.3 - set the secrets per docs/KEY_ROTATION.md (5 min)."
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is NOT set (resolved to empty at runtime). The history fallback was removed in v0.4.3."
+            echo "  CHECK 1: Settings -> Secrets and variables -> ACTIONS section (NOT Codespaces, NOT Dependabot), Secrets tab."
+            echo "  CHECK 2: The NAME must be EXACTLY 'ANDROID_KEYSTORE_BASE64' (uppercase, underscores, no spaces)."
+            echo "  CHECK 3: The secret VALUE is the full base64 of ruby-invoice-v2.keystore (one long line) - see docs/KEY_ROTATION.md."
+            echo "  CHECK 4: After adding secrets, trigger a FRESH run (Re-run all jobs on the latest run, or push)."
             exit 1
           fi
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/ruby-invoice-v2.keystore
