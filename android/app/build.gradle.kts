@@ -1,8 +1,37 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// GOAL 3 (v0.4.1) - SECRETS OUT OF THE REPO.
+//
+// The release keystore is NO LONGER committed. Signing values come from
+// android/key.properties (gitignored), which is:
+//   * written locally by the developer (keep ruby-invoice.keystore on
+//     disk, never git add it), and
+//   * restored inside CI by the workflow from GitHub Actions Secrets
+//     (ANDROID_KEYSTORE_BASE64 / _PASSWORD / _ALIAS / _KEY_PASSWORD)
+//     - see docs/SECURITY.md.
+// If key.properties is missing (fresh clone without secrets), the
+// release build falls back to the plain DEBUG key and prints a LOUD
+// warning: such an APK installs fresh but CANNOT update an existing
+// signed install - do not distribute it.
+val keystoreProps = Properties()
+val keyPropsFile = rootProject.file("key.properties")
+if (keyPropsFile.exists()) {
+    keyPropsFile.inputStream().use { keystoreProps.load(it) }
+}
+val ksPath = keystoreProps.getProperty("storeFile")
+val ksStorePass = keystoreProps.getProperty("storePassword")
+val ksKeyAlias = keystoreProps.getProperty("keyAlias")
+val ksKeyPass = keystoreProps.getProperty("keyPassword")
+val ksFile = ksPath?.let { file(it) }
+val hasReleaseKey =
+    ksFile != null && ksFile.exists() &&
+    ksStorePass != null && ksKeyAlias != null && ksKeyPass != null
 
 android {
     namespace = "com.rubyinvoice.ruby_invoice"
@@ -32,34 +61,14 @@ android {
         versionName = flutter.versionName
     }
 
-    // GOAL 3 (v0.4.1) - SECRETS OUT OF THE REPO.
-    //
-    // The release keystore is NO LONGER committed. Signing values come
-    // from android/key.properties (gitignored), which is:
-    //   * written locally by the developer (keep ruby-invoice.keystore
-    //     on disk, never git add it), and
-    //   * restored inside CI by the workflow from GitHub Actions
-    //     Secrets (ANDROID_KEYSTORE_BASE64 / _PASSWORD / _ALIAS /
-    //     _KEY_PASSWORD) - see docs/SECURITY.md.
-    // If key.properties is missing (fresh clone without secrets), the
-    // build falls back to the plain DEBUG key and prints a LOUD
-    // warning: such an APK installs fresh but CANNOT update an
-    // existing signed install - do not distribute it.
-    val keyProps = java.util.Properties().apply {
-        val f = rootProject.file("key.properties")
-        if (f.exists()) f.inputStream().use { load(it) }
-    }
-    val ksFile = (keyProps.getProperty("storeFile"))?.let { file(it) }
-    val hasReleaseKey = ksFile != null && ksFile.exists() &&
-        keyProps.getProperty("storePassword") != null
-
+    // Values are resolved at the top of this file (imports + key.properties).
     signingConfigs {
         if (hasReleaseKey) {
             create("rubyRelease") {
-                storeFile = ksFile
-                storePassword = keyProps.getProperty("storePassword")
-                keyAlias = keyProps.getProperty("keyAlias")
-                keyPassword = keyProps.getProperty("keyPassword")
+                storeFile = ksFile!!
+                storePassword = ksStorePass
+                keyAlias = ksKeyAlias
+                keyPassword = ksKeyPass
             }
         }
     }
