@@ -16,10 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history: the interim signing fallback reads the keystore
-          # binary from the pre-removal commit until the owner sets the
-          # ANDROID_* GitHub Secrets (GOAL 3 - see docs/SECURITY.md).
-          fetch-depth: 0
+          # v0.4.3: shallow checkout. The git-history signing fallback is
+          # GONE - signing material comes ONLY from GitHub Secrets
+          # (docs/KEY_ROTATION.md). History is never read for secrets.
+          fetch-depth: 1
 
       - uses: actions/setup-java@v4
         with:
@@ -48,47 +48,41 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # GOAL 3 (v0.4.1): the release keystore is NOT in the repo anymore.
-      # Preferred: the 4 GitHub Actions Secrets. Interim (secrets not set
-      # yet): restore the SAME keystore binary + values from git history
-      # so current installs keep receiving update-compatible APKs.
-      # The password was already public in old commits - rotating the
-      # key after the secrets are set is documented in docs/SECURITY.md.
-      - name: Restore signing keystore (secrets, else history fallback)
+      # BLOCKER-1 (v0.4.3) - KEY ROTATION DONE, FALLBACK REMOVED.
+      # The rotated NEW keystore arrives from GitHub Secrets ONLY.
+      # Fail loudly when it is missing: NO git-history fallback exists
+      # anymore (the old key + passwords were public in history, which is
+      # exactly why this repo rotated to a new key via apksigner lineage).
+      - name: Restore rotated signing keystore (secrets only)
         run: |
-          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/ruby-invoice.keystore
-            {
-              echo "storeFile=ruby-invoice.keystore"
-              echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-              echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}"
-              echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}"
-            } > android/key.properties
-            echo "Signing with the keystore from GitHub Secrets."
+          if [ -z "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is NOT set. The history fallback was removed in v0.4.3 - set the secrets per docs/KEY_ROTATION.md (5 min)."
+            exit 1
+          fi
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/ruby-invoice-v2.keystore
+          {
+            echo "storeFile=ruby-invoice-v2.keystore"
+            echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+            echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}"
+            echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}"
+          } > android/key.properties
+          echo "Rotated keystore restored from GitHub Secrets."
+
+      # OPTIONAL 5th secret (Android 7/8 update compatibility): the
+      # RETIRED old keystore signs the v2 band (API 24-27) so phones on
+      # Android 7/8 keep taking in-place updates. Its password is already
+      # public in git history (retired key) - hardcoding it here exposes
+      # nothing new. Without the secret, the APK is new-key-only: Android
+      # 9+ STILL updates (v3 lineage), Android 7/8 needs one
+      # uninstall+reinstall (data returns from cloud sync).
+      - name: Restore retired old keystore (optional, Android 7/8 band)
+        run: |
+          if [ -n "${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}" | base64 -d > /tmp/old-key.keystore
+            echo "OLD_KEYSTORE_AVAILABLE=true" >> "$GITHUB_ENV"
           else
-            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set - using the interim history fallback (see docs/SECURITY.md)."
-            # Newest commit that still CONTAINED the keystore file:
-            # line 1 of `git log -- <path>` is the removal commit itself,
-            # line 2 is the last commit where the file existed (its tree
-            # has BOTH the keystore binary and the old signing config).
-            OLD_SHA=$(git log --format='%H' -- android/app/ruby-invoice.keystore | sed -n '2p')
-            if [ -z "$OLD_SHA" ]; then
-              echo "::error::No keystore in git history AND no ANDROID_* secrets set - cannot sign. Set the 4 secrets (docs/SECURITY.md)."
-              exit 1
-            fi
-            git show "$OLD_SHA:android/app/build.gradle.kts" | grep -oE '(storePassword|keyPassword|keyAlias) = "[^"]+"' | sed 's/.*= "\([^"]*\)"/\1/' > /tmp/sign_vals.txt
-            git show "$OLD_SHA:android/app/ruby-invoice.keystore" > android/app/ruby-invoice.keystore
-            if [ ! -s android/app/ruby-invoice.keystore ] || [ ! -s /tmp/sign_vals.txt ]; then
-              echo "::error::Keystore/value restore from $OLD_SHA came back empty."
-              exit 1
-            fi
-            {
-              echo "storeFile=ruby-invoice.keystore"
-              echo "storePassword=$(sed -n 1p /tmp/sign_vals.txt)"
-              echo "keyAlias=$(sed -n 2p /tmp/sign_vals.txt)"
-              echo "keyPassword=$(sed -n 3p /tmp/sign_vals.txt)"
-            } > android/key.properties
-            echo "Interim: keystore restored from git history ($OLD_SHA)."
+            echo "::warning::ANDROID_OLD_KEYSTORE_BASE64 not set - Android 7/8 (API 24-27) users will need one uninstall+reinstall to update."
+            echo "OLD_KEYSTORE_AVAILABLE=false" >> "$GITHUB_ENV"
           fi
 
       - name: Analyze
@@ -160,6 +154,48 @@ jobs:
           set -o pipefail
           flutter build apk --release 2>&1 | tee /tmp/build_full.log
 
+      # BLOCKER-1 (v0.4.3) - FINAL ROTATED SIGNATURE (proven in sandbox).
+      # apksigner REPLACES the gradle intermediate signature with:
+      #   * API 24-27: v2 signed by the RETIRED old key -> Android 7/8
+      #     in-place updates keep working (old cert == installed cert).
+      #   * API 28+:   v3 signed by the NEW key + proof-of-rotation
+      #     lineage (android/lineage, committed - it is public by design:
+      #     it ships inside every v3-signed APK). rotation-min-sdk 28
+      #     makes the NEW key authoritative from Android 9 up, so the
+      #     leaked old key can no longer push updates to API 28+ users.
+      - name: Apply rotated signature (apksigner + lineage)
+        run: |
+          set -o pipefail
+          BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          APKSIGNER="$ANDROID_HOME/build-tools/$BT/apksigner"
+          echo "apksigner: $APKSIGNER ($($APKSIGNER --version))"
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          NEW_KS=android/app/ruby-invoice-v2.keystore
+          NEW_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
+          NEW_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+          if [ "$OLD_KEYSTORE_AVAILABLE" = "true" ]; then
+            "$APKSIGNER" sign \
+              --ks /tmp/old-key.keystore --ks-key-alias ruby_invoice \
+                --ks-pass pass:rubyinvoice --key-pass pass:rubyinvoice \
+              --next-signer \
+              --ks "$NEW_KS" --ks-key-alias "$NEW_ALIAS" \
+                --ks-pass pass:"$NEW_PASS" \
+              --lineage android/lineage \
+              --rotation-min-sdk-version 28 \
+              --out "${APK}.rotated" "$APK"
+          else
+            "$APKSIGNER" sign \
+              --ks "$NEW_KS" --ks-key-alias "$NEW_ALIAS" \
+                --ks-pass pass:"$NEW_PASS" \
+              --lineage android/lineage \
+              --rotation-min-sdk-version 28 \
+              --out "${APK}.rotated" "$APK"
+          fi
+          mv "${APK}.rotated" "$APK"
+          echo "=== signature proof (CI log) ==="
+          "$APKSIGNER" verify --print-certs --min-sdk-version 24 "$APK"
+          "$APKSIGNER" verify --min-sdk-version 28 "$APK" > /dev/null && echo "v3 lineage verify OK (API 28+)"
+
       # Surface the real gradle error on the run page (step summaries are
       # visible even when the raw log is too large for the UI to render).
       - name: Summarize build failure
@@ -200,6 +236,8 @@ jobs:
       # GOAL 3 (v0.4.1): archive the R8 mapping.txt with every build so
       # obfuscated Java/Kotlin stack traces from Crashlytics can be
       # re-traced later. warn-only: a config change must never break CI.
+      # (v0.4.3 note: the rotated signature step above runs BEFORE the
+      # APK artifact upload, so every published APK carries the lineage.)
       - name: Upload R8 mapping.txt artifact
         if: always()
         uses: actions/upload-artifact@v4

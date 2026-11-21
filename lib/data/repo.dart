@@ -35,6 +35,66 @@ class Repo {
     );
   }
 
+  // ------------------------------------------------------------------
+  // BLOCKER 2 (v0.4.3): PER-DEVICE NUMBER SLOTS - collision-proof
+  // offline numbering for bill_no / purchase_no / return_no.
+  //
+  // Old scheme: MAX+1 across ALL rows. Two phones offline => both pick
+  // the same number => collision (v0.4.1 added a post-sync healer; now
+  // the collision cannot happen in the first place).
+  //
+  // New scheme: each registered device owns a slot of 100000 numbers:
+  //   slot 0  -> 1 .. 99,999     legacy + single-registered-device era
+  //   slot 1  -> 100,000..199,999  1st device of a 2-device shop
+  //   slot 2  -> 200,000..299,999  2nd device
+  //   slot 9  -> 900,000..999,999  fallback: device not registered yet
+  // (slot = index of THIS device in users/{uid}.registeredDevices + 1,
+  // computed by AccessService on every account refresh - list order can
+  // only grow/shrink per the Firestore rules, never swap, so positions
+  // are stable). Numbers of EXISTING rows are never rewritten - only
+  // NEW numbers move into the device's slot.
+  // ------------------------------------------------------------------
+
+  /// Width of one device's number range.
+  static const int numberSlotWidth = 100000;
+
+  /// Slot used when the device is not (yet) in registeredDevices -
+  /// e.g. a fresh offline install. Rarely used; the v0.4.1 duplicate
+  /// healer stays as the belt-and-braces net for it.
+  static const int numberSlotFallback = 9;
+
+  static const _slotMetaKey = 'number_slot';
+
+  /// Slot of THIS device (from meta, written by AccessService).
+  /// Missing / out-of-range => fallback slot 9.
+  Future<int> numberSlot(DatabaseExecutor db) async {
+    final rows =
+        await db.rawQuery('SELECT value FROM meta WHERE key = ?', [_slotMetaKey]);
+    final v = int.tryParse(rows.isEmpty ? '' : (rows.first['value'] ?? '') as String);
+    if (v == null || v < 0 || v > 98) return numberSlotFallback;
+    return v;
+  }
+
+  /// AccessService calls this on every account refresh (login, live
+  /// snapshot, verify-on-sync tick).
+  Future<void> setNumberSlot(int slot) async {
+    if (slot < 0 || slot > 98) slot = numberSlotFallback;
+    await setMeta(_slotMetaKey, '$slot');
+  }
+
+  /// Next number INSIDE this device's slot: MAX(col)+1 restricted to the
+  /// slot's range. Slot 0 continues the legacy numbering seamlessly.
+  Future<int> _nextInSlot(DatabaseExecutor db, String table, String col) async {
+    final slot = await numberSlot(db);
+    final lo = slot * numberSlotWidth;
+    final rows = await db.rawQuery(
+      'SELECT COALESCE(MAX($col), 0) + 1 AS next FROM $table '
+      'WHERE $col >= ? AND $col < ?',
+      [lo, lo + numberSlotWidth],
+    );
+    return ((rows.first['next'] as int?) ?? lo + 1);
+  }
+
   Future<int> getPendingDirtyCount() async {
     final db = await _db;
     int n = 0;
@@ -206,12 +266,11 @@ class Repo {
   // ---------------- purchases (maal kharida) ----------------
 
   /// The invoice number the NEXT saved purchase will get. Mirrors
-  /// nextBillNo(): MAX + 1 across all rows, deleted ones included, so a
-  /// number is never reused.
+  /// nextBillNo(): MAX + 1 inside THIS device's slot (v0.4.3 per-device
+  /// slots), so two offline phones can never pick the same number.
   Future<int> nextPurchaseNo() async {
     final db = await _db;
-    final rows = await db.rawQuery('SELECT COALESCE(MAX(purchase_no), 0) + 1 AS next FROM purchases');
-    return (rows.first['next'] as int?) ?? 1;
+    return _nextInSlot(db, 'purchases', 'purchase_no');
   }
 
   /// All purchase invoices, newest date first.
@@ -226,32 +285,38 @@ class Repo {
   // ---------------- billing ----------------
 
   /// The invoice number the NEXT saved bill will get (shown in the
-  /// billing header before saving). Consistent with saveBill(), which
-  /// uses MAX(bill_no) + 1 across ALL bills (deleted ones too, so a
-  /// number is never reused).
+  /// billing header before saving). MAX(bill_no) + 1 INSIDE THIS
+  /// DEVICE'S SLOT (v0.4.3): slot 0 keeps plain numbering for
+  /// single-device shops and legacy data; a 2-device shop uses slots
+  /// 1/2 (100,xxx / 200,xxx) so two offline phones can never collide.
   Future<int> nextBillNo() async {
     final db = await _db;
-    final rows = await db.rawQuery('SELECT COALESCE(MAX(bill_no), 0) + 1 AS next FROM bills');
-    return (rows.first['next'] as int?) ?? 1;
+    return _nextInSlot(db, 'bills', 'bill_no');
   }
 
   // ------------- bill number collision heal (v0.4.1, GOAL 3) -------------
 
   /// GOAL 3 (v0.4.1): two phones logged into the SAME shop can both
   /// save "bill #12" while offline - MAX+1 is atomic per phone, not
-  /// across phones. After every sync pull this healer re-runs the
-  /// numbering deterministically: per duplicate group (same number,
-  /// different ids) the OLDEST row keeps the number and every other row
-  /// moves to the end (MAX+1, +2, ...) and is marked dirty, so the
-  /// renumber syncs back to the cloud and the other phone. Both phones
-  /// converge on the same result (oldest wins, id tiebreak) - no
-  /// ping-pong. Rows still dirty (unsynced local edits) are never
+  /// across phones. Since v0.4.3 NEW numbers come from per-device slots
+  /// (see the slot block near setMeta above) so the collision cannot
+  /// happen anymore; this healer stays as the safety net for rows saved
+  /// by older app versions and for the slot-9 fallback corner. After
+  /// every sync pull it re-runs the numbering deterministically: per
+  /// duplicate group (same number, different ids) the OLDEST row keeps
+  /// the number and every other row moves to the end (MAX+1, +2, ...)
+  /// and is marked dirty, so the renumber syncs back to the cloud and
+  /// the other phone. Rows still dirty (unsynced local edits) are never
   /// renumbered. Returns how many rows were renumbered.
   Future<int> reconcileDuplicateNumbers() async {
     final db = await _db;
     var fixed = 0;
     fixed += await _reconcileNumberTable(db, 'bills', 'bill_no');
     fixed += await _reconcileNumberTable(db, 'purchases', 'purchase_no');
+    // v0.4.3: the two return ledgers are now covered too (they were
+    // the gap found in the independent audit).
+    fixed += await _reconcileNumberTable(db, 'sales_returns', 'return_no');
+    fixed += await _reconcileNumberTable(db, 'purchase_returns', 'return_no');
     return fixed;
   }
 
@@ -312,8 +377,7 @@ class Repo {
     final dayKey = _dayKey(billMs);
 
     return db.transaction<Bill>((txn) async {
-      final noRows = await txn.rawQuery('SELECT COALESCE(MAX(bill_no), 0) + 1 AS next FROM bills');
-      final billNo = (noRows.first['next'] as int?) ?? 1;
+      final billNo = await _nextInSlot(txn, 'bills', 'bill_no');
 
       int subtotal = 0;
       for (final l in lines) {
@@ -1214,8 +1278,7 @@ class Repo {
     }
     final total = subtotal + gstTotal + parcelPaise;
 
-    final noRows = await db.rawQuery('SELECT COALESCE(MAX(purchase_no), 0) + 1 AS next FROM purchases');
-    final no = (noRows.first['next'] as int?) ?? 1;
+    final no = await _nextInSlot(db, 'purchases', 'purchase_no');
 
     final purchase = Purchase(
       id: _uuid.v4(),
@@ -1497,9 +1560,7 @@ class Repo {
 
   Future<int> nextPurchaseReturnNo() async {
     final db = await _db;
-    final rows = await db.rawQuery(
-        'SELECT COALESCE(MAX(return_no), 0) + 1 AS next FROM purchase_returns');
-    return (rows.first['next'] as int?) ?? 1;
+    return _nextInSlot(db, 'purchase_returns', 'return_no');
   }
 
   Future<PurchaseReturn> savePurchaseReturn({
@@ -1521,9 +1582,7 @@ class Repo {
       gstTotal += l.gstPaise;
     }
 
-    final noRows = await db.rawQuery(
-        'SELECT COALESCE(MAX(return_no), 0) + 1 AS next FROM purchase_returns');
-    final no = (noRows.first['next'] as int?) ?? 1;
+    final no = await _nextInSlot(db, 'purchase_returns', 'return_no');
 
     final ret = PurchaseReturn(
       id: _uuid.v4(),
@@ -1582,9 +1641,7 @@ class Repo {
 
   Future<int> nextSalesReturnNo() async {
     final db = await _db;
-    final rows = await db.rawQuery(
-        'SELECT COALESCE(MAX(return_no), 0) + 1 AS next FROM sales_returns');
-    return (rows.first['next'] as int?) ?? 1;
+    return _nextInSlot(db, 'sales_returns', 'return_no');
   }
 
   /// Saves a customer sales return: the amount is CREDITED in the
@@ -1606,9 +1663,7 @@ class Repo {
       amount += l.amountPaise;
     }
 
-    final noRows = await db.rawQuery(
-        'SELECT COALESCE(MAX(return_no), 0) + 1 AS next FROM sales_returns');
-    final no = (noRows.first['next'] as int?) ?? 1;
+    final no = await _nextInSlot(db, 'sales_returns', 'return_no');
 
     final ret = SalesReturn(
       id: _uuid.v4(),

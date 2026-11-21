@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../data/repo.dart';
 import 'remote_config.dart';
 
 /// The single source of truth for whether this app instance may be used.
@@ -83,6 +84,39 @@ class AccessService {
   }
 
   // ------------------------------------------------------------------
+  // BLOCKER 2 (v0.4.3): per-device NUMBER SLOT for offline bill /
+  // purchase / return numbering. Slot 0 = legacy + single-device era
+  // (plain 1,2,3...); slot = index in registeredDevices + 1 for a
+  // multi-device shop (100,xxx / 200,xxx) - two devices can never share
+  // a range, so two offline phones can never pick the same number.
+  // The Firestore rules only allow the list to GROW or SHRINK (never a
+  // wholesale swap), so positions are stable across devices.
+  // ------------------------------------------------------------------
+
+  /// Pure slot resolver (unit-tested). Unregistered / unknown device
+  /// gets the fallback slot 9 (Repo.numberSlotFallback).
+  static int numberSlotFor(String deviceId, List<String> registeredDevices) {
+    if (registeredDevices.contains(deviceId)) {
+      if (registeredDevices.length <= 1) return 0; // single-device shop:
+      // plain numbering, exactly like the legacy era.
+      return registeredDevices.indexOf(deviceId) + 1; // 1..N, unique per device
+    }
+    return Repo.numberSlotFallback;
+  }
+
+  /// Push the current slot into the local meta table. Called on every
+  /// account refresh; a failure here must never affect the access
+  /// verdict (numbering falls back to slot 9 + the duplicate healer).
+  Future<void> _updateNumberSlot(AccountInfo info) async {
+    try {
+      final me = await deviceId();
+      await Repo.instance.setNumberSlot(numberSlotFor(me, info.registeredDevices));
+    } catch (_) {
+      // Keep last known slot - never throw into the access path.
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Registration side: create / repair the users/{uid} document.
   // ------------------------------------------------------------------
 
@@ -122,6 +156,7 @@ class AccessService {
       final info = AccountInfo.fromMap(uid, snap.data()!);
       if (info.status == 'pending') await selfActivateIfAllowed();
       await _registerDeviceIfNeeded(info);
+      await _updateNumberSlot(info);
       return info;
     }
 
@@ -152,6 +187,7 @@ class AccessService {
       ..['createdAt'] = DateTime.now().millisecondsSinceEpoch
       ..['updatedAt'] = FieldValue.serverTimestamp());
     await _cacheAccount(info);
+    await _updateNumberSlot(info);
     return info;
   }
 
@@ -291,6 +327,7 @@ class AccessService {
       final info = AccountInfo.fromMap(user.uid, snap.data()!);
       await _registerDeviceIfNeeded(info);
       await _cacheAccount(info);
+      await _updateNumberSlot(info);
       account.value = info;
       state.value = info.evaluateFor(await deviceId());
     }, onError: (e) {
@@ -327,6 +364,7 @@ class AccessService {
       final info = AccountInfo.fromMap(user.uid, snap.data()!);
       await _registerDeviceIfNeeded(info);
       await _cacheAccount(info);
+      await _updateNumberSlot(info);
       account.value = info;
       state.value = info.evaluateFor(await deviceId());
     } catch (_) {
